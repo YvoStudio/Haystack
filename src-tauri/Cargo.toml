@@ -1,0 +1,41 @@
+[package]
+name = "haystack"
+version = "0.1.0"
+description = "Haystack desktop file manager"
+authors = ["yvo-zym"]
+edition = "2021"
+license = "GPL-3.0-or-later"
+rust-version = "1.77"
+
+[lib]
+name = "haystack_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = ["protocol-asset", "tray-icon"] }
+tauri-plugin-dialog = "2"
+tauri-plugin-opener = "2"
+tauri-plugin-shell = "2"
+tauri-plugin-clipboard-manager = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+dirs = "5"
+walkdir = "2"
+anyhow = "1"
+thiserror = "1"
+base64 = "0.22"
+tiny_http = "0.12"
+mime_guess = "2"
+url = "2"
+percent-encoding = "2"
+image = { version = "0.25", default-features = false, features = ["png"] }
+
+[profile.release]
+panic = "abort"
+codegen-units = 1
+lto = true
+opt-level = "s"
+strip = true

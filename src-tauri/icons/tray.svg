@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" fill="none" stroke="#000" stroke-width="2" stroke-linejoin="round" stroke-linecap="round">
+  <!-- 后层文件夹:只露出顶部一段,暗示堆叠 -->
+  <path d="M12 6 H17 L19 8 H25 A1 1 0 0 1 26 9 V18"/>
+  <!-- 中层文件夹:露出顶部 + 右侧 -->
+  <path d="M9 10 H14 L16 12 H22 A1 1 0 0 1 23 13 V22"/>
+  <!-- 前层文件夹:完整封闭 -->
+  <path d="M4 15 V25 A1 1 0 0 0 5 26 H20 A1 1 0 0 0 21 25 V16 A1 1 0 0 0 20 15 H13 L11 13 H5 A1 1 0 0 0 4 14 Z"/>
+</svg>

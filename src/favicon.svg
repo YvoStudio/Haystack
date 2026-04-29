@@ -1,0 +1,24 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024">
+  <!-- 实际图标主体只占中央 824×824(macOS Big Sur+ 规范),四周 100px 透明边距 -->
+  <g transform="translate(100 100)">
+    <!-- 白色圆角底 -->
+    <rect width="824" height="824" rx="180" fill="#FFFFFF"/>
+
+    <!-- 内层元素整体居中 -->
+    <g transform="translate(200 170) scale(3)">
+      <!-- 后层文件夹:深紫 -->
+      <g transform="translate(20 0)">
+        <path d="M0 8 A8 8 0 0 1 8 0 H56 L66 12 H128 A8 8 0 0 1 136 20 V92 A8 8 0 0 1 128 100 H8 A8 8 0 0 1 0 92 Z" fill="#6D28D9"/>
+      </g>
+      <!-- 中层文件夹:琥珀 -->
+      <g transform="translate(10 32)">
+        <path d="M0 8 A8 8 0 0 1 8 0 H56 L66 12 H128 A8 8 0 0 1 136 20 V92 A8 8 0 0 1 128 100 H8 A8 8 0 0 1 0 92 Z" fill="#F59E0B"/>
+      </g>
+      <!-- 前层(最上层)文件夹:macOS 文件夹蓝 -->
+      <g transform="translate(0 64)">
+        <path d="M0 8 A8 8 0 0 1 8 0 H56 L66 12 H128 A8 8 0 0 1 136 20 V92 A8 8 0 0 1 128 100 H8 A8 8 0 0 1 0 92 Z" fill="#5AACE2"/>
+        <path d="M0 22 H136" stroke="#7BBEEE" stroke-width="1.5" opacity="0.5"/>
+      </g>
+    </g>
+  </g>
+</svg>

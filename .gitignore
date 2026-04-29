@@ -1,0 +1,28 @@
+# Dependencies
+node_modules/
+
+# Rust / Tauri
+src-tauri/target/
+src-tauri/Cargo.lock.bak
+src-tauri/gen/
+**/*.rs.bk
+
+# Build outputs
+dist/
+build/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Editor
+.vscode/
+.idea/
+*.swp
+
+# Tauri-generated icons (regen with `npm run tauri icon`)
+# 暂不忽略,首次生成后可加进来
+
+# Local config
+.env
+.env.local
