@@ -56,9 +56,16 @@ pub fn run() {
                     {
                         let app = tray.app_handle();
                         if let Some(w) = app.get_webview_window("main") {
-                            let _ = w.unminimize();
-                            let _ = w.show();
-                            let _ = w.set_focus();
+                            let is_visible = w.is_visible().unwrap_or(false);
+                            let is_minimized = w.is_minimized().unwrap_or(false);
+                            let is_focused = w.is_focused().unwrap_or(false);
+                            if is_visible && !is_minimized && is_focused {
+                                let _ = w.hide();
+                            } else {
+                                let _ = w.unminimize();
+                                let _ = w.show();
+                                let _ = w.set_focus();
+                            }
                         }
                     }
                 })
