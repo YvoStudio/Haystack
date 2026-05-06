@@ -56,13 +56,19 @@ Cross-platform desktop file manager — turn any directory into a searchable, pr
 
 ## Install
 
-Download the package for your platform from [Releases](https://github.com/yvo-zym/Haystack/releases).
+Download the package for your platform from [Releases](https://github.com/YvoStudio/Haystack/releases).
 
 ### macOS
 
 Download the `.dmg` (`aarch64` for Apple Silicon, `x64` for Intel) and drag it to your Applications folder.
 
-If the first launch is blocked because the app is unsigned, go to **System Settings → Privacy & Security**, scroll down, and click **Open Anyway**.
+The app is not yet Apple-signed/notarized, so on first launch macOS may show **"Haystack" is damaged and can't be opened**. It's not actually damaged — the browser tagged the download with a quarantine attribute. Remove it with:
+
+```bash
+xattr -dr com.apple.quarantine /Applications/Haystack.app
+```
+
+Then double-click to launch. If you instead see "cannot verify developer", go to **System Settings → Privacy & Security**, scroll down, and click **Open Anyway**.
 
 ### Windows
 
@@ -80,7 +86,7 @@ Runtime deps: `webkit2gtk-4.1`, `libayatana-appindicator3` (for the tray icon). 
 Requires [Rust](https://rustup.rs/) 1.77+ and Node.js 18+:
 
 ```bash
-git clone git@github.com:yvo-zym/Haystack.git
+git clone git@github.com:YvoStudio/Haystack.git
 cd Haystack
 npm install
 npx tauri icon src/favicon.svg       # generate icons (first time only)

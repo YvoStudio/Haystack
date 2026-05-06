@@ -2,7 +2,7 @@
 name = "haystack"
 version = "0.1.0"
 description = "Haystack desktop file manager"
-authors = ["yvo-zym"]
+authors = ["YvoStudio"]
 edition = "2021"
 license = "GPL-3.0-or-later"
 rust-version = "1.77"

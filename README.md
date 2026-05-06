@@ -56,13 +56,19 @@
 
 ## 安装
 
-到 [Releases](https://github.com/yvo-zym/Haystack/releases) 下载对应平台的安装包。
+到 [Releases](https://github.com/YvoStudio/Haystack/releases) 下载对应平台的安装包。
 
 ### macOS
 
 下载 `.dmg`(Apple Silicon 选 `aarch64`,Intel 选 `x64`),拖入"应用程序"文件夹。
 
-首次启动若提示"无法验证开发者",到「系统设置 → 隐私与安全性」滑到底点 **仍要打开**。
+由于 App 暂未做 Apple 签名 / 公证,首次打开时 macOS 可能提示 **"Haystack" 已损坏,无法打开**。这不是真的损坏,是浏览器下载时打了隔离标记,执行下面命令去掉即可:
+
+```bash
+xattr -dr com.apple.quarantine /Applications/Haystack.app
+```
+
+之后双击就能正常启动。如果只是提示"无法验证开发者",到「系统设置 → 隐私与安全性」滑到底点 **仍要打开** 也可以。
 
 ### Windows
 
@@ -80,7 +86,7 @@
 需要 [Rust](https://rustup.rs/) 1.77+ 和 Node.js 18+:
 
 ```bash
-git clone git@github.com:yvo-zym/Haystack.git
+git clone git@github.com:YvoStudio/Haystack.git
 cd Haystack
 npm install
 npx tauri icon src/favicon.svg       # 生成图标(首次)
