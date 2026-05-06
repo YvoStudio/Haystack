@@ -60,15 +60,7 @@ Download the package for your platform from [Releases](https://github.com/YvoStu
 
 ### macOS
 
-Download the `.dmg` (`aarch64` for Apple Silicon, `x64` for Intel) and drag it to your Applications folder.
-
-The app is not yet Apple-signed/notarized, so on first launch macOS may show **"Haystack" is damaged and can't be opened**. It's not actually damaged — the browser tagged the download with a quarantine attribute. Remove it with:
-
-```bash
-xattr -dr com.apple.quarantine /Applications/Haystack.app
-```
-
-Then double-click to launch. If you instead see "cannot verify developer", go to **System Settings → Privacy & Security**, scroll down, and click **Open Anyway**.
+Download the `.dmg` (`aarch64` for Apple Silicon, `x64` for Intel) and drag it to your Applications folder. The app is Apple-signed and notarized.
 
 ### Windows
 

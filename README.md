@@ -60,15 +60,7 @@
 
 ### macOS
 
-下载 `.dmg`(Apple Silicon 选 `aarch64`,Intel 选 `x64`),拖入"应用程序"文件夹。
-
-由于 App 暂未做 Apple 签名 / 公证,首次打开时 macOS 可能提示 **"Haystack" 已损坏,无法打开**。这不是真的损坏,是浏览器下载时打了隔离标记,执行下面命令去掉即可:
-
-```bash
-xattr -dr com.apple.quarantine /Applications/Haystack.app
-```
-
-之后双击就能正常启动。如果只是提示"无法验证开发者",到「系统设置 → 隐私与安全性」滑到底点 **仍要打开** 也可以。
+下载 `.dmg`(Apple Silicon 选 `aarch64`,Intel 选 `x64`),拖入"应用程序"文件夹即可。已 Apple 签名 + 公证。
 
 ### Windows
 
