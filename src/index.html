@@ -95,10 +95,12 @@
     border-bottom: 1px solid #eee;
     height: 40px; display: flex; align-items: center;
   }
-  .breadcrumb { display: flex; align-items: center; flex: 1; min-width: 0; }
-  .breadcrumb a { color: #555; text-decoration: none; }
+  .breadcrumb { display: flex; align-items: center; flex: 1; min-width: 0; flex-wrap: nowrap; overflow-x: auto; overflow-y: hidden; white-space: nowrap; scrollbar-width: thin; }
+  .breadcrumb::-webkit-scrollbar { height: 4px; }
+  .breadcrumb::-webkit-scrollbar-thumb { background: #ddd; border-radius: 2px; }
+  .breadcrumb a { color: #555; text-decoration: none; flex-shrink: 0; white-space: nowrap; }
   .breadcrumb a:hover { color: #111; }
-  .breadcrumb span { margin: 0 4px; color: #ccc; }
+  .breadcrumb span { margin: 0 4px; color: #ccc; flex-shrink: 0; white-space: nowrap; }
 
   .btn-star {
     border: none; background: none; cursor: pointer; font-size: 18px;
@@ -406,6 +408,7 @@
         <button id="searchClear" style="position:absolute;right:6px;border:none;background:none;cursor:pointer;color:#aaa;font-size:14px;display:none;padding:0 2px;">&times;</button>
       </span>
       <div class="search-results" id="searchResults"></div>
+      <button class="btn-bookmarks" id="btnGotoPath" title="跳转路径 (Cmd/Ctrl+L)">⤳ 跳转</button>
       <span style="position:relative;display:inline-flex;">
         <button class="view-mode" id="btnViewSort" style="display:inline-flex;align-items:center;gap:4px;cursor:pointer;">
           <svg width="12" height="12" viewBox="0 0 24 24" fill="none"><path d="M3 6h18M3 12h12M3 18h6" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
@@ -417,6 +420,14 @@
     </div>
   </div>
   <div id="content"><div class="empty-msg">加载中...</div></div>
+  <div id="gotoPathOverlay" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.25);z-index:9999;align-items:flex-start;justify-content:center;padding-top:120px;">
+    <div style="background:#fff;border-radius:8px;box-shadow:0 8px 32px rgba(0,0,0,0.2);padding:18px;width:560px;max-width:90vw;">
+      <div style="font-size:13px;color:#666;margin-bottom:8px;">输入绝对路径或 <code>~/...</code> 跳转,Enter 确认,Esc 取消</div>
+      <input id="gotoPathInput" type="text" placeholder="/Users/me/projects/foo  或  ~/Downloads"
+        style="width:100%;padding:10px 12px;border:1px solid #ddd;border-radius:6px;font-size:14px;font-family:inherit;outline:none;box-sizing:border-box;">
+      <div id="gotoPathError" style="font-size:12px;color:#c33;margin-top:8px;min-height:16px;"></div>
+    </div>
+  </div>
 </div>
 
 <div class="drawer-overlay" id="drawerOverlay"></div>
@@ -2804,6 +2815,99 @@ window.__haystackCopyUrl = async function (absPath) {
   try { await navigator.clipboard.writeText(url); } catch {}
   return url;
 };
+
+// ---- 跳转到路径 ----
+(function () {
+  const overlay = document.getElementById('gotoPathOverlay');
+  const input = document.getElementById('gotoPathInput');
+  const err = document.getElementById('gotoPathError');
+  const btn = document.getElementById('btnGotoPath');
+  if (!overlay || !input || !btn) return;
+
+  function open() {
+    err.textContent = '';
+    input.value = '';
+    overlay.style.display = 'flex';
+    setTimeout(() => input.focus(), 0);
+  }
+  function close() { overlay.style.display = 'none'; }
+
+  async function resolve(raw) {
+    let p = (raw || '').trim();
+    if (!p) return null;
+    // 去掉粘贴时附带的引号
+    p = p.replace(/^['"]|['"]$/g, '');
+    // ~ 展开
+    if (p === '~' || p.startsWith('~/') || p.startsWith('~\\')) {
+      const cfg = await window.__haystack.getCfg();
+      const home = cfg.roots[0]?.path || '';
+      p = p.replace(/^~/, home);
+    }
+    // Windows 反斜杠 → 正斜杠
+    p = p.replace(/\\/g, '/');
+    // 必须是绝对路径
+    const isAbs = p.startsWith('/') || /^[A-Za-z]:\//.test(p);
+    if (!isAbs) return { error: '请输入绝对路径(以 / 开头,或 ~/...,或 C:/ ...)' };
+    // 找到所属根
+    const cfg = await window.__haystack.getCfg();
+    const root = (cfg.roots || []).find(r => {
+      const rp = (r.path || '').replace(/\\/g, '/');
+      return p === rp || p.startsWith(rp.endsWith('/') ? rp : rp + '/');
+    });
+    if (!root) return { error: '该路径不在任何已配置的根目录下' };
+    const rp = (root.path || '').replace(/\\/g, '/');
+    let rel = p.slice(rp.length).replace(/^\/+/, '');
+    return { rel, abs: p };
+  }
+
+  async function submit() {
+    const r = await resolve(input.value);
+    if (!r) return;
+    if (r.error) { err.textContent = r.error; return; }
+    let rel = r.rel;
+    // 是否文件:输入未以 / 结尾时,尝试 list_dir;失败则视为文件,跳到父级并预览
+    const trailingSlash = rel.endsWith('/');
+    if (!trailingSlash && rel !== '') {
+      try {
+        await window.__haystack.invoke('list_dir', { path: r.abs });
+        // 是目录
+        rel = rel + '/';
+      } catch {
+        // 视为文件:跳到父级目录,然后预览
+        const lastSlash = rel.lastIndexOf('/');
+        const parent = lastSlash >= 0 ? rel.slice(0, lastSlash + 1) : '';
+        const filename = lastSlash >= 0 ? rel.slice(lastSlash + 1) : rel;
+        location.hash = '#/' + parent;
+        close();
+        // 等待目录加载,再触发预览
+        setTimeout(() => {
+          try { previewFile(BASE + parent + filename, filename); } catch (e) { console.error(e); }
+        }, 200);
+        return;
+      }
+    } else if (rel === '') {
+      // 跳转到根
+    } else {
+      // 已带 /,直接当目录
+    }
+    location.hash = '#/' + rel;
+    close();
+  }
+
+  btn.addEventListener('click', open);
+  input.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') { e.preventDefault(); submit(); }
+    else if (e.key === 'Escape') { e.preventDefault(); close(); }
+  });
+  overlay.addEventListener('click', (e) => { if (e.target === overlay) close(); });
+  // Cmd+L / Ctrl+L 全局快捷键
+  window.addEventListener('keydown', (e) => {
+    if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'l' && !e.shiftKey && !e.altKey) {
+      e.preventDefault();
+      open();
+    }
+  });
+})();
 </script>
 </body>
 </html>

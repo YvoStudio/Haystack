@@ -17,10 +17,8 @@ pub fn run() {
         .plugin(tauri_plugin_clipboard_manager::init())
         .setup(|app| {
             let store = config::ConfigStore::load(app.handle())?;
-            let scope = app.asset_protocol_scope();
-            for root in &store.snapshot().roots {
-                let _ = scope.allow_directory(&root.path, true);
-            }
+            // 注：此处不再依赖 asset:// 协议;前端通过内置 HTTP 服务(server.rs)加载本地资源,
+            // 因为 Tauri 2 当前版本的运行时 asset_protocol_scope 实际未生效。
             let http_state = server::HttpState::new();
             server::spawn(store.snapshot(), http_state.status.clone());
             app.manage(http_state);

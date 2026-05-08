@@ -61,19 +61,46 @@
   };
 
   // ============================================================
-  // 资源协议:把 /www/<rel> 改写成 asset://localhost/...,让 webview 能加载本地文件
+  // 资源协议:把 /www/<rel> 改写成 http://127.0.0.1:<port>/...,走内置 tiny_http
+  // 不再用 asset://,因为 Tauri 2 的 asset 协议 scope 在本项目环境下不生效
   // ============================================================
+  let cfgSync = null;
   let firstRootSync = null;
   let localIpSync = null;
   let httpPortSync = null;
-  getCfg().then(cfg => { firstRootSync = cfg.roots[0]?.path || null; });
+  getCfg().then(cfg => {
+    cfgSync = cfg;
+    firstRootSync = cfg.roots[0]?.path || null;
+  });
   invoke('get_local_ip').then(ip => { localIpSync = ip; }).catch(() => {});
   invoke('get_http_status').then(s => { httpPortSync = s && s.port; }).catch(() => {});
 
+  // 镜像 server.rs 里 default_prefix_for / build_routes 的逻辑
+  function routePrefixOf(root) {
+    const ub = root.urlBase || root.url_base;
+    if (ub) {
+      const normalized = /^https?:/i.test(ub) ? ub : `http://${ub}`;
+      try {
+        const u = new URL(normalized);
+        return u.pathname.replace(/\/+$/, '');
+      } catch {}
+    }
+    const basename = (root.path || '').replace(/[\\/]+$/, '').split(/[\\/]/).pop();
+    return basename ? `/${basename}` : '';
+  }
+  function encodePathSegments(p) {
+    return p.split('/').map(s => encodeURIComponent(s)).join('/');
+  }
   function relToAssetUrl(rel) {
-    if (!firstRootSync) return null;
+    if (!firstRootSync || !httpPortSync || !cfgSync) return null;
     const abs = isAbs(rel) ? rel : joinAbs(firstRootSync, rel);
-    return convertFileSrc(abs);
+    // 找到 abs 所属的根
+    const root = (cfgSync.roots || []).find(r => abs.startsWith(r.path));
+    if (!root) return null;
+    let sub = abs.slice(root.path.length).replace(/^[\\/]/, '').replace(/\\/g, '/');
+    const prefix = routePrefixOf(root);
+    const path = `${prefix}/${encodePathSegments(sub)}`.replace(/\/+/g, '/');
+    return `http://127.0.0.1:${httpPortSync}${path}`;
   }
   function rewriteSrcAttr(el) {
     if (!el || !el.getAttribute) return;
@@ -259,10 +286,13 @@
       });
     }
 
-    // 静态文件读取(md/text/code/html 预览等):/www/<rel> → asset:// 实际文件
+    // 静态文件读取(md/text/code/html 预览等):/www/<rel> → 走内置 HTTP
     if (p.startsWith('/www/') && !p.startsWith('/www/_')) {
       let rel = p.slice('/www/'.length);
       try { rel = decodeURIComponent(rel); } catch {}
+      const url = relToAssetUrl(rel);
+      if (url) return orig(url, init);
+      // 兜底:回到 asset:// (基本走不到这一步)
       const root = await firstRoot();
       const abs = isAbs(rel) ? rel : joinAbs(root, rel);
       return orig(convertFileSrc(abs), init);
