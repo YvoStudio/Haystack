@@ -54,6 +54,7 @@
   }
   .sidebar .btn-home:hover { background: rgba(0,0,0,0.06); color: #1d1d1f; }
   .sidebar .btn-home:active { background: rgba(0,0,0,0.10); }
+  .sidebar .btn-home.active { background: #e8e0f0; color: #5b21b6; }
   .sidebar .logo-actions { display: flex; gap: 6px; align-items: center; }
 
   .tree-item {
@@ -392,6 +393,7 @@
   <div class="logo-bar">
     <span class="logo">Haystack</span>
     <div class="logo-actions">
+    <button class="btn-home" id="btnToggleHidden" title="显示隐藏文件(夹)"><svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8S1 12 1 12z" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/><circle cx="12" cy="12" r="3" stroke="currentColor" stroke-width="2"/></svg></button>
     <button class="btn-home" id="btnHome" title="收起全部，回到根目录"><svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M3 12l9-8 9 8M5 11v8a1 1 0 001 1h4v-5h4v5h4a1 1 0 001-1v-8" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
     <button class="btn-home" id="btnSettings" title="设置"><svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M12 15a3 3 0 100-6 3 3 0 000 6z M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 11-2.83 2.83l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 11-4 0v-.09a1.65 1.65 0 00-1.08-1.51 1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 11-2.83-2.83l.06-.06a1.65 1.65 0 00.33-1.82 1.65 1.65 0 00-1.51-1H3a2 2 0 110-4h.09a1.65 1.65 0 001.51-1.08 1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 112.83-2.83l.06.06a1.65 1.65 0 001.82.33H9a1.65 1.65 0 001-1.51V3a2 2 0 114 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 112.83 2.83l-.06.06a1.65 1.65 0 00-.33 1.82V9a1.65 1.65 0 001.51 1H21a2 2 0 110 4h-.09a1.65 1.65 0 00-1.51 1z" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
     </div>
@@ -446,7 +448,7 @@
 // ============================================================
 const BLACKLIST = {
   names: ['.DS_Store', '.Trash', '.CFUserTextEncoding', '.localized', 'index.html', 'node_modules'],
-  prefixes: ['.'],
+  prefixes: [],
   // 前缀规则的白名单（即使以 . 开头也显示）
   whitelist: ['.claude', '.agents'],
   extensions: [],
@@ -597,10 +599,15 @@ const TAG_COLORS = [
 function getColorTags() {
   try { return JSON.parse(localStorage.getItem(TAG_KEY)) || {}; } catch { return {}; }
 }
+const SHOW_HIDDEN_KEY = 'haystack_show_hidden';
+function getShowHidden() { return localStorage.getItem(SHOW_HIDDEN_KEY) === '1'; }
+function setShowHidden(v) { localStorage.setItem(SHOW_HIDDEN_KEY, v ? '1' : '0'); }
+
 function setColorTag(filePath, color) {
   const tags = getColorTags();
   if (color) tags[filePath] = color; else delete tags[filePath];
   localStorage.setItem(TAG_KEY, JSON.stringify(tags));
+  Object.keys(dirCache).forEach(k => delete dirCache[k]);
 }
 function getColorTag(filePath) {
   return getColorTags()[filePath] || null;
@@ -809,20 +816,52 @@ function refreshTreeDots() {
       label.appendChild(dot);
     }
   });
+  resortTreeSiblings(document.getElementById('tree'));
+  document.querySelectorAll('.tree-children').forEach(resortTreeSiblings);
+}
+
+function resortTreeSiblings(container) {
+  if (!container) return;
+  const nodes = Array.from(container.children);
+  const keyed = nodes.map((n, idx) => {
+    const row = n.querySelector(':scope > .tree-item');
+    const tag = row ? getColorTag(row.dataset.path) : null;
+    return { n, idx, tag };
+  });
+  keyed.sort((a, b) => {
+    if (a.tag && !b.tag) return -1;
+    if (!a.tag && b.tag) return 1;
+    return a.idx - b.idx;
+  });
+  keyed.forEach(({ n }) => container.appendChild(n));
 }
 
 // ---- 获取目录数据（带缓存）----
 const dirCache = {};
 async function fetchDir(rel) {
-  const cacheKey = rel + '|' + currentSort;
+  const showHidden = getShowHidden();
+  const cacheKey = rel + '|' + currentSort + '|' + (showHidden ? 'h' : '');
   if (dirCache[cacheKey]) return dirCache[cacheKey];
   const r = await fetch(`/www/_list_all?dir=${encodeURIComponent(rel)}`);
   if (!r.ok) throw new Error(r.status);
   const items = await r.json();
-  const filtered = items.filter(i => !blocked(i.name, rel));
+  const filtered = items.filter(i => {
+    if (blocked(i.name, rel)) return false;
+    if (i.name.startsWith('.')) {
+      if (BLACKLIST.whitelist && BLACKLIST.whitelist.includes(i.name)) return true;
+      if (showHidden) return true;
+      const key = rel + i.name + (i.type === 'directory' ? '/' : '');
+      return !!getColorTag(key);
+    }
+    return true;
+  });
+  const tagOf = (i) => getColorTag(rel + i.name + (i.type === 'directory' ? '/' : ''));
   filtered.sort((a, b) => {
     if (a.type === 'directory' && b.type !== 'directory') return -1;
     if (a.type !== 'directory' && b.type === 'directory') return 1;
+    const aTag = tagOf(a), bTag = tagOf(b);
+    if (aTag && !bTag) return -1;
+    if (!aTag && bTag) return 1;
     if (currentSort === 'size') return (b.size || 0) - (a.size || 0);
     if (currentSort === 'date') return new Date(b.mtime) - new Date(a.mtime);
     return a.name.localeCompare(b.name, 'zh-CN');
@@ -2472,6 +2511,26 @@ function collapseAllTree() {
 document.getElementById('btnHome').addEventListener('click', () => {
   collapseAllTree();
   location.hash = '#/';
+});
+
+const btnToggleHidden = document.getElementById('btnToggleHidden');
+function syncHiddenBtn() {
+  btnToggleHidden.classList.toggle('active', getShowHidden());
+  btnToggleHidden.title = getShowHidden() ? '隐藏隐藏文件(夹)' : '显示隐藏文件(夹)';
+}
+syncHiddenBtn();
+btnToggleHidden.addEventListener('click', async () => {
+  setShowHidden(!getShowHidden());
+  syncHiddenBtn();
+  Object.keys(dirCache).forEach(k => delete dirCache[k]);
+  const tree = document.getElementById('tree');
+  tree.innerHTML = '';
+  delete tree.dataset.loaded;
+  await buildTreeLevel(tree, '', 0);
+  const p = pathFromHash();
+  await renderFiles(p);
+  await expandTreeTo(p);
+  highlightTree(p);
 });
 
 function highlightFileItem(name) {
