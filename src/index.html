@@ -6,6 +6,7 @@
 <title>Haystack</title>
 <link rel="icon" type="image/svg+xml" href="favicon.svg">
 <script src="api.js"></script>
+<script src="updater.js"></script>
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github.min.css">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/marked/12.0.2/marked.min.js"></script>
@@ -838,9 +839,12 @@ function resortTreeSiblings(container) {
 
 // ---- 获取目录数据（带缓存）----
 const dirCache = {};
+function dirCacheKey(rel) {
+  return rel + '|' + currentSort + '|' + (getShowHidden() ? 'h' : '');
+}
 async function fetchDir(rel) {
+  const cacheKey = dirCacheKey(rel);
   const showHidden = getShowHidden();
-  const cacheKey = rel + '|' + currentSort + '|' + (showHidden ? 'h' : '');
   if (dirCache[cacheKey]) return dirCache[cacheKey];
   const r = await fetch(`/www/_list_all?dir=${encodeURIComponent(rel)}`);
   if (!r.ok) throw new Error(r.status);
@@ -1002,9 +1006,17 @@ const FILE_TEMPLATES = [
 ];
 
 function setupCreateMenu(rel) {
+  // 上次的菜单挂在 body 下；renderBreadcrumb 每次又在面包屑里新建一个同 id 元素,
+  // 先移除残留的，避免 id 冲突
+  document.querySelectorAll('.create-menu').forEach(m => {
+    if (m.parentElement === document.body) m.remove();
+  });
   const btn = document.getElementById('btnCreate');
   const menu = document.getElementById('createMenu');
   menu.innerHTML = '';
+  // 移到 body 下，避免被 .breadcrumb 的 overflow:hidden 裁切
+  menu.style.position = 'fixed';
+  document.body.appendChild(menu);
   for (const t of FILE_TEMPLATES) {
     if (t.sep) {
       const sep = document.createElement('div');
@@ -1023,11 +1035,24 @@ function setupCreateMenu(rel) {
     });
     menu.appendChild(item);
   }
+  function positionMenu() {
+    const r = btn.getBoundingClientRect();
+    menu.style.top = (r.bottom + 4) + 'px';
+    menu.style.left = r.left + 'px';
+  }
   btn.addEventListener('click', (e) => {
     e.stopPropagation();
+    positionMenu();
     menu.classList.toggle('open');
   });
-  document.addEventListener('click', () => menu.classList.remove('open'), { once: false });
+  menu.addEventListener('click', (e) => e.stopPropagation());
+  if (!setupCreateMenu._docBound) {
+    setupCreateMenu._docBound = true;
+    document.addEventListener('click', () => {
+      const m = document.getElementById('createMenu');
+      if (m) m.classList.remove('open');
+    });
+  }
 }
 
 function showNameDialog(title, defaultValue, onConfirm) {
@@ -1607,13 +1632,13 @@ function previewFile(url, name) {
   // 二进制文件 → 只显示图标和大小
   if (BINARY_EXTS.has(ext) || OFFICE_EXTS.has(ext)) {
     const rel2 = pathFromHash();
-    const cached2 = dirCache[rel2 + '|' + currentSort];
+    const cached2 = dirCache[dirCacheKey(rel2)];
     const fi = cached2 && cached2.find(f => f.name === name);
     showLargeFilePreview(url, name, fi ? fi.size : 0); return;
   }
   // 其他文件：检查大小，>5MB 只显示图标和大小
   const rel = pathFromHash();
-  const cached = dirCache[rel + '|' + currentSort];
+  const cached = dirCache[dirCacheKey(rel)];
   const fileInfo = cached && cached.find(f => f.name === name);
   if (fileInfo && fileInfo.size > 5 * 1024 * 1024) {
     showLargeFilePreview(url, name, fileInfo.size); return;
@@ -1856,8 +1881,7 @@ let currentImages = [];
 function showImagePreview(url, name) {
   // 构建当前目录的图片列表
   const rel = pathFromHash();
-  const cacheKey = rel + '|' + currentSort;
-  const cached = dirCache[cacheKey];
+  const cached = dirCache[dirCacheKey(rel)];
   if (cached) {
     currentImages = cached
       .filter(i => i.type !== 'directory' && IMAGE_EXTS.has(i.name.split('.').pop().toLowerCase()))
@@ -1946,8 +1970,7 @@ function showImagePreview(url, name) {
     const w = img.naturalWidth, h = img.naturalHeight;
     // 找文件大小
     const rel = pathFromHash();
-    const cacheKey = rel + '|' + currentSort;
-    const cached = dirCache[cacheKey];
+    const cached = dirCache[dirCacheKey(rel)];
     const fileInfo = cached && cached.find(f => f.name === currentImages[idx].name);
     const sizeStr = fileInfo ? fmtSize(fileInfo.size || 0) : '';
     infoTag.textContent = `${w} × ${h}` + (sizeStr ? `  ·  ${sizeStr}` : '');

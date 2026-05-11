@@ -18,6 +18,8 @@
       "allow": [{ "url": "http://**" }, { "url": "https://**" }]
     },
     "shell:allow-open",
-    "clipboard-manager:allow-write-text"
+    "clipboard-manager:allow-write-text",
+    "updater:default",
+    "process:allow-restart"
   ]
 }

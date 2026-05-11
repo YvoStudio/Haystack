@@ -1,6 +1,6 @@
 [package]
 name = "haystack"
-version = "0.1.0"
+version = "0.1.1"
 description = "Haystack desktop file manager"
 authors = ["YvoStudio"]
 edition = "2021"
@@ -32,6 +32,8 @@ mime_guess = "2"
 url = "2"
 percent-encoding = "2"
 image = { version = "0.25", default-features = false, features = ["png"] }
+tauri-plugin-updater = "2.0.0-rc.4"
+tauri-plugin-process = "2.0.0-rc.1"
 
 [profile.release]
 panic = "abort"

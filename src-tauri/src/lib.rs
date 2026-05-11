@@ -15,6 +15,8 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_clipboard_manager::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
+        .plugin(tauri_plugin_process::init())
         .setup(|app| {
             let store = config::ConfigStore::load(app.handle())?;
             // 注：此处不再依赖 asset:// 协议;前端通过内置 HTTP 服务(server.rs)加载本地资源,
