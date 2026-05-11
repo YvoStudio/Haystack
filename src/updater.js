@@ -85,14 +85,14 @@
     installBtn.onclick = () => {
       skipBtn.disabled = laterBtn.disabled = installBtn.disabled = true;
       progressEl.classList.add('visible');
-      runInstall({ fillEl, textEl }).then(close).catch((err) => {
+      runInstall({ fillEl, textEl, rid: info.rid }).then(close).catch((err) => {
         textEl.textContent = '更新失败: ' + (err && err.message ? err.message : String(err));
         skipBtn.disabled = laterBtn.disabled = installBtn.disabled = false;
       });
     };
   }
 
-  async function runInstall({ fillEl, textEl }) {
+  async function runInstall({ fillEl, textEl, rid }) {
     let downloaded = 0;
     let total = 0;
     const channel = new Channel();
@@ -114,7 +114,7 @@
         textEl.textContent = '下载完成，正在安装...';
       }
     };
-    await invoke('plugin:updater|download_and_install', { onEvent: channel });
+    await invoke('plugin:updater|download_and_install', { rid, onEvent: channel });
     textEl.textContent = '安装完成，即将重启...';
     await invoke('plugin:process|restart');
   }
