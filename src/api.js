@@ -73,7 +73,20 @@
     firstRootSync = cfg.roots[0]?.path || null;
   });
   invoke('get_local_ip').then(ip => { localIpSync = ip; }).catch(() => {});
-  invoke('get_http_status').then(s => { httpPortSync = s && s.port; }).catch(() => {});
+  // server::spawn 在后台线程里 bind 端口,首次 get_http_status 可能拿到 port=null;
+  // 这里轮询到 port 出来为止,然后 rescan 一次把已渲染的 /www/<rel> <img> 改写过来。
+  (function pollHttp(tries) {
+    invoke('get_http_status').then(s => {
+      if (s && s.port) {
+        httpPortSync = s.port;
+        if (document.body) scan(document.body);
+      } else if (tries > 0) {
+        setTimeout(() => pollHttp(tries - 1), 200);
+      }
+    }).catch(() => {
+      if (tries > 0) setTimeout(() => pollHttp(tries - 1), 200);
+    });
+  })(50);
 
   // 镜像 server.rs 里 default_prefix_for / build_routes 的逻辑
   function routePrefixOf(root) {
