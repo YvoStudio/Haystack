@@ -127,7 +127,57 @@ function unloadDaemon() {
   try { execSync(`launchctl bootout system ${LAUNCH_DAEMON}`, { stdio: 'ignore' }); } catch {}
 }
 
-function install() {
+// 用真实用户身份探测 0.0.0.0:80 的可用性。返回 { code }
+//   code = 'OK'         本用户能 bind,Haystack 会直接占 80,pf rdr 反而碍事
+//   code = 'INUSE'      已被某个进程占用,装 pf 会抢走人家的流量(Haystack 自身 / nginx 等)
+//   code = 'NOPERM'     权限不够 bind <1024,Haystack 也会 fallback 8080,这才是 pf 该上场的场景
+//   code = 'UNKNOWN'    其他,谨慎处理
+function probePort80AsRealUser() {
+  const realUid = process.env.SUDO_UID ? Number(process.env.SUDO_UID) : null;
+  const realGid = process.env.SUDO_GID ? Number(process.env.SUDO_GID) : null;
+  if (realUid === null || realUid === 0) return { code: 'UNKNOWN', reason: '无 SUDO_UID,无法以真实用户身份探测' };
+  const probe = `
+    const net = require('net');
+    const srv = net.createServer();
+    srv.once('error', e => { process.stdout.write(e.code || 'ERR'); process.exit(2); });
+    srv.listen(80, '0.0.0.0', () => srv.close(() => { process.stdout.write('OK'); process.exit(0); }));
+  `;
+  const { spawnSync } = require('child_process');
+  const r = spawnSync(process.execPath, ['-e', probe], {
+    uid: realUid,
+    gid: realGid,
+    timeout: 3000,
+  });
+  if (r.error || r.signal) return { code: 'UNKNOWN', reason: r.error ? r.error.message : 'signal ' + r.signal };
+  const out = (r.stdout || '').toString().trim();
+  if (r.status === 0 && out === 'OK') return { code: 'OK' };
+  if (out === 'EACCES' || out === 'EPERM') return { code: 'NOPERM', reason: out };
+  if (out === 'EADDRINUSE') return { code: 'INUSE', reason: out };
+  return { code: 'UNKNOWN', reason: out || ('exit=' + r.status) };
+}
+
+async function install() {
+  const probe = probePort80AsRealUser();
+  if (probe.code === 'OK') {
+    console.log('检测到当前用户可直接 bind 0.0.0.0:80。');
+    console.log('Haystack 启动时会直接占 80,装 pf 反而会把 lo0:80 截到空 8080。');
+    console.log('已退出,未做任何改动。');
+    return;
+  }
+  if (probe.code === 'INUSE') {
+    console.log('80 端口已被占用(' + (probe.reason || '') + ')。');
+    console.log('如果是 Haystack 自己占的,装 pf 会让它收不到 lo0 流量;');
+    console.log('如果是别的服务(nginx 等)占的,装 pf 会抢走它的流量。');
+    console.log('已退出,未做任何改动。如确需安装,先关掉占用进程再跑。');
+    return;
+  }
+  if (probe.code === 'UNKNOWN') {
+    console.log('警告: 无法以真实用户身份探测 80 端口可用性(' + (probe.reason || '') + ')。');
+    console.log('如果你确定 Haystack 当前 fallback 在 8080 才需要这个脚本,带 --force 重跑。');
+    if (!process.argv.includes('--force')) return;
+  }
+  // probe.code === 'NOPERM' 或 --force: 正常装
+
   fs.writeFileSync(ANCHOR_PATH, ANCHOR_RULE, { mode: 0o644 });
   fs.chownSync(ANCHOR_PATH, 0, 0);
   console.log(`✓ 写入 ${ANCHOR_PATH}`);
@@ -184,13 +234,13 @@ function status() {
   }
 }
 
-function main() {
+async function main() {
   checkPlatform();
   const cmd = process.argv[2] || 'install';
-  if (cmd === 'install') { checkRoot(); install(); }
+  if (cmd === 'install') { checkRoot(); await install(); }
   else if (cmd === 'uninstall') { checkRoot(); uninstall(); }
   else if (cmd === 'status') { status(); }
   else die(`未知子命令: ${cmd} (install | uninstall | status)`);
 }
 
-main();
+main().catch(e => { console.error(e); process.exit(1); });

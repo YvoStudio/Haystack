@@ -1,5 +1,6 @@
 mod commands;
 mod config;
+mod protocol;
 mod server;
 
 use tauri::{
@@ -17,10 +18,11 @@ pub fn run() {
         .plugin(tauri_plugin_clipboard_manager::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_process::init())
+        // 自定义协议:在 webview 里不靠端口加载本机文件,scope 由 ConfigStore 校验。
+        // server.rs 的 HTTP 服务仍保留给"复制网络地址"(LAN/外部分享)。
+        .register_uri_scheme_protocol(protocol::SCHEME, protocol::handle)
         .setup(|app| {
             let store = config::ConfigStore::load(app.handle())?;
-            // 注：此处不再依赖 asset:// 协议;前端通过内置 HTTP 服务(server.rs)加载本地资源,
-            // 因为 Tauri 2 当前版本的运行时 asset_protocol_scope 实际未生效。
             let http_state = server::HttpState::new();
             server::spawn(store.snapshot(), http_state.status.clone());
             app.manage(http_state);

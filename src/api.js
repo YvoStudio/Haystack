@@ -61,8 +61,9 @@
   };
 
   // ============================================================
-  // 资源协议:把 /www/<rel> 改写成 http://127.0.0.1:<port>/...,走内置 tiny_http
-  // 不再用 asset://,因为 Tauri 2 的 asset 协议 scope 在本项目环境下不生效
+  // 资源协议:走自定义 URI scheme `haystack-asset://`,scope 在 Rust 端校验。
+  // 不再依赖 HTTP 端口、不再有 startup 竞态;
+  // server.rs 上的 HTTP 仍保留给"复制网络地址"(LAN/外部分享场景)。
   // ============================================================
   let cfgSync = null;
   let firstRootSync = null;
@@ -71,56 +72,31 @@
   getCfg().then(cfg => {
     cfgSync = cfg;
     firstRootSync = cfg.roots[0]?.path || null;
+    if (document.body) scan(document.body);
   });
   invoke('get_local_ip').then(ip => { localIpSync = ip; }).catch(() => {});
-  // server::spawn 在后台线程里 bind 端口,首次 get_http_status 可能拿到 port=null;
-  // 这里轮询到 port 出来为止,然后 rescan 一次把已渲染的 /www/<rel> <img> 改写过来。
+  // 仍然轮询一次拿到端口,只给 __haystackBuildUrl(复制网络地址)用,不再阻塞 asset
   (function pollHttp(tries) {
     invoke('get_http_status').then(s => {
-      if (s && s.port) {
-        httpPortSync = s.port;
-        if (document.body) scan(document.body);
-      } else if (tries > 0) {
-        setTimeout(() => pollHttp(tries - 1), 200);
-      }
+      if (s && s.port) httpPortSync = s.port;
+      else if (tries > 0) setTimeout(() => pollHttp(tries - 1), 200);
     }).catch(() => {
       if (tries > 0) setTimeout(() => pollHttp(tries - 1), 200);
     });
   })(50);
 
-  // 镜像 server.rs 里 default_prefix_for / build_routes 的逻辑
-  function routePrefixOf(root) {
-    const ub = root.urlBase || root.url_base;
-    if (ub) {
-      const normalized = /^https?:/i.test(ub) ? ub : `http://${ub}`;
-      try {
-        const u = new URL(normalized);
-        return u.pathname.replace(/\/+$/, '');
-      } catch {}
-    }
-    const basename = (root.path || '').replace(/[\\/]+$/, '').split(/[\\/]/).pop();
-    return basename ? `/${basename}` : '';
-  }
-  function encodePathSegments(p) {
-    return p.split('/').map(s => encodeURIComponent(s)).join('/');
-  }
+  // 把"相对第一根的 rel"或绝对路径生成 webview 能 fetch 的 asset URL
   function relToAssetUrl(rel) {
-    if (!firstRootSync || !httpPortSync || !cfgSync) return null;
+    if (!firstRootSync) return null;
     const abs = isAbs(rel) ? rel : joinAbs(firstRootSync, rel);
-    // 找到 abs 所属的根
-    const root = (cfgSync.roots || []).find(r => abs.startsWith(r.path));
-    if (!root) return null;
-    let sub = abs.slice(root.path.length).replace(/^[\\/]/, '').replace(/\\/g, '/');
-    const prefix = routePrefixOf(root);
-    const path = `${prefix}/${encodePathSegments(sub)}`.replace(/\/+/g, '/');
-    return `http://127.0.0.1:${httpPortSync}${path}`;
+    return convertFileSrc(abs, 'haystack-asset');
   }
   function rewriteSrcAttr(el) {
     if (!el || !el.getAttribute) return;
     const s = el.getAttribute('src');
     if (!s) return;
     // 跳过已重写、外链、data URL
-    if (s.startsWith('asset:') || s.startsWith('http') || s.startsWith('data:') || s.startsWith('blob:')) return;
+    if (s.startsWith('haystack-asset:') || s.startsWith('asset:') || s.startsWith('http') || s.startsWith('data:') || s.startsWith('blob:')) return;
     if (!s.startsWith('/www/') && !s.startsWith('www/')) return;
     if (s.startsWith('/www/_')) return; // 接口路径,不是文件
     let rel = s.replace(/^\/?www\//, '');
