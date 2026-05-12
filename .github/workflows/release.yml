@@ -80,25 +80,23 @@ jobs:
           EN_FILE=$(mktemp)
           HAS_EN=0
 
-          # 每个 commit 一段,分隔符 \x1F (single record sep);subject 在前,body 在后用 \x1E 分
-          IFS=$'\n'
-          for record in $(git log "$RANGE" --no-merges --pretty=format:'%H%x1E%s%x1E%b%x1F' | tr '\x1F' '\n'); do
-            [ -z "$record" ] && continue
-            subj=$(printf '%s' "$record" | awk -F$'\x1E' '{print $2}')
-            body=$(printf '%s' "$record" | awk -F$'\x1E' '{print $3}')
+          # 一次拿 commit SHA 列表,再逐个 git log -1 取 subject/body,避免 body 里换行干扰 bash 分词
+          while IFS= read -r sha; do
+            [ -z "$sha" ] && continue
+            subj=$(git log -1 --format=%s "$sha")
             case "$subj" in
               Merge*|"chore: bump"*|"chore: release"*) continue ;;
             esac
             printf -- '- %s\n' "$subj" >> "$ZH_FILE"
-            en=$(printf '%s' "$body" | grep -m1 '^EN: ' | sed 's/^EN: //')
+            # sed -n 没匹配也退 0,比 grep 安全
+            en=$(git log -1 --format=%b "$sha" | sed -n 's/^EN: //p' | head -1)
             if [ -n "$en" ]; then
               HAS_EN=1
               printf -- '- %s\n' "$en" >> "$EN_FILE"
             else
-              # 没标 EN: 的条目英文段直接复用中文 subject,避免不对齐
               printf -- '- %s\n' "$subj" >> "$EN_FILE"
             fi
-          done
+          done < <(git log "$RANGE" --no-merges --format=%H)
 
           [ -s "$ZH_FILE" ] || echo "- 维护性更新" > "$ZH_FILE"
 
