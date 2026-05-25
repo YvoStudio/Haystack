@@ -6,8 +6,26 @@ mod server;
 use tauri::{
     menu::{Menu, MenuItem},
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
-    Manager,
+    AppHandle, Manager,
 };
+use tauri_plugin_global_shortcut::{Code, GlobalShortcutExt, Modifiers, Shortcut, ShortcutState};
+
+// Alt+D 切换主窗口显示/隐藏:可见且聚焦 → 隐藏;否则 → 显示并聚焦。
+// Why: 与托盘左键点击行为保持一致,避免出现"窗口被其它应用挡住时 toggle 直接隐藏"的反直觉。
+fn toggle_main_window(app: &AppHandle) {
+    if let Some(w) = app.get_webview_window("main") {
+        let is_visible = w.is_visible().unwrap_or(false);
+        let is_minimized = w.is_minimized().unwrap_or(false);
+        let is_focused = w.is_focused().unwrap_or(false);
+        if is_visible && !is_minimized && is_focused {
+            let _ = w.hide();
+        } else {
+            let _ = w.unminimize();
+            let _ = w.show();
+            let _ = w.set_focus();
+        }
+    }
+}
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -18,6 +36,17 @@ pub fn run() {
         .plugin(tauri_plugin_clipboard_manager::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_process::init())
+        .plugin(
+            tauri_plugin_global_shortcut::Builder::new()
+                .with_handler(|app, shortcut, event| {
+                    if event.state() == ShortcutState::Pressed
+                        && shortcut.matches(Modifiers::ALT, Code::KeyD)
+                    {
+                        toggle_main_window(app);
+                    }
+                })
+                .build(),
+        )
         // 自定义协议:在 webview 里不靠端口加载本机文件,scope 由 ConfigStore 校验。
         // server.rs 的 HTTP 服务仍保留给"复制网络地址"(LAN/外部分享)。
         .register_uri_scheme_protocol(protocol::SCHEME, protocol::handle)
@@ -56,19 +85,7 @@ pub fn run() {
                         ..
                     } = event
                     {
-                        let app = tray.app_handle();
-                        if let Some(w) = app.get_webview_window("main") {
-                            let is_visible = w.is_visible().unwrap_or(false);
-                            let is_minimized = w.is_minimized().unwrap_or(false);
-                            let is_focused = w.is_focused().unwrap_or(false);
-                            if is_visible && !is_minimized && is_focused {
-                                let _ = w.hide();
-                            } else {
-                                let _ = w.unminimize();
-                                let _ = w.show();
-                                let _ = w.set_focus();
-                            }
-                        }
+                        toggle_main_window(tray.app_handle());
                     }
                 })
                 .on_menu_event(|app, event| match event.id().as_ref() {
@@ -101,6 +118,10 @@ pub fn run() {
                     _ => {}
                 })
                 .build(app)?;
+
+            // 默认全局快捷键 Alt+D 呼出/隐藏主窗口
+            let alt_d = Shortcut::new(Some(Modifiers::ALT), Code::KeyD);
+            app.global_shortcut().register(alt_d)?;
 
             // 关闭按钮 → 隐藏窗口(应用驻留在菜单栏);只有托盘菜单"退出"才真正退出
             if let Some(window) = app.get_webview_window("main") {
