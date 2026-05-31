@@ -67,6 +67,8 @@
   }
   .tree-item:hover { background: #f8f8f8; color: #111; }
   .tree-item.active { background: #e8e0f0; color: #5b21b6; font-weight: 500; }
+  .tree-root-item { border-bottom: 1px solid #eee; padding-top: 4px; padding-bottom: 4px; }
+  .tree-root-item .tree-label { font-size: 14px; color: #333; }
 
   .tree-toggle {
     width: 18px; height: 18px; display: inline-flex;
@@ -839,14 +841,15 @@ function resortTreeSiblings(container) {
 
 // ---- 获取目录数据（带缓存）----
 const dirCache = {};
-function dirCacheKey(rel) {
-  return rel + '|' + currentSort + '|' + (getShowHidden() ? 'h' : '');
+function dirCacheKey(navPath) {
+  return navPath + '|' + currentSort + '|' + (getShowHidden() ? 'h' : '');
 }
-async function fetchDir(rel) {
-  const cacheKey = dirCacheKey(rel);
+async function fetchDir(navPath) {
+  const { rootIdx, rel } = parseNavPath(navPath);
+  const cacheKey = dirCacheKey(navPath);
   const showHidden = getShowHidden();
   if (dirCache[cacheKey]) return dirCache[cacheKey];
-  const r = await fetch(`/www/_list_all?dir=${encodeURIComponent(rel)}`);
+  const r = await fetch(`/www/_list_all?dir=${encodeURIComponent(rel)}&root=${rootIdx}`);
   if (!r.ok) throw new Error(r.status);
   const items = await r.json();
   const filtered = items.filter(i => {
@@ -876,17 +879,18 @@ async function fetchDir(rel) {
 
 // ---- 左侧树 ----
 let _suppressExpandTree = false;
-async function buildTreeLevel(container, rel, depth) {
+async function buildTreeLevel(container, navPath, depth) {
   // 防重复加载
   if (container.dataset.loaded) return;
   container.dataset.loaded = '1';
 
   let items;
-  try { items = await fetchDir(rel); } catch { return; }
+  try { items = await fetchDir(navPath); } catch { return; }
   const dirs = items.filter(i => i.type === 'directory');
+  const { rootIdx, rel } = parseNavPath(navPath);
 
   for (const d of dirs) {
-    const path = rel + d.name + '/';
+    const path = makeNavPath(rootIdx, (rel || '') + d.name + '/');
     const node = document.createElement('div');
 
     const row = document.createElement('div');
@@ -952,19 +956,23 @@ function highlightTree(rel) {
 }
 
 // ---- 右侧文件列表 ----
-function renderBreadcrumb(rel) {
+function renderBreadcrumb(navPath) {
   const bc = document.getElementById('breadcrumb');
+  const { rootIdx, rel } = parseNavPath(navPath);
+  const hc = window.__haystack;
+  const roots = (hc && hc._cfgSyncRef && hc._cfgSyncRef() && hc._cfgSyncRef().roots) || [];
+  const rootName = roots[rootIdx] ? (roots[rootIdx].name || '根' + rootIdx) : '根' + rootIdx;
   const parts = rel.split('/').filter(Boolean);
   let html = '';
   const currentColor = getColorTag(rel);
   if (currentColor) {
     html += `<span class="bc-color-dot" title="当前目录颜色标签" style="width:12px;height:12px;border-radius:50%;background:${currentColor};display:inline-block;margin-right:8px;flex-shrink:0;"></span>`;
   }
-  html += `<a href="#/">~</a>`;
+  html += `<a href="#/${makeNavPath(rootIdx, '')}">${rootName}</a>`;
   let acc = '';
   for (const p of parts) {
     acc += p + '/';
-    html += `<span>/</span><a href="#/${acc}">${p}</a>`;
+    html += `<span>/</span><a href="#/${makeNavPath(rootIdx, acc)}">${p}</a>`;
   }
   const starred = isBookmarked(rel);
   const starSvg = starred
@@ -976,19 +984,18 @@ function renderBreadcrumb(rel) {
   html += `<span style="position:relative;display:inline-flex;margin-left:4px;"><button class="btn-create" id="btnCreate" title="新建文件"><svg width="18" height="18" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="9" stroke="currentColor" stroke-width="1.5"/><path d="M12 8v8M8 12h8" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg></button><div class="create-menu" id="createMenu"></div></span>`;
   bc.innerHTML = html;
   document.getElementById('btnStar').addEventListener('click', () => {
-    toggleBookmark(pathFromHash());
-    renderBreadcrumb(pathFromHash());
+    toggleBookmark(navPath);
+    renderBreadcrumb(navPath);
   });
   document.getElementById('btnBcMore').addEventListener('click', async (e) => {
     e.stopPropagation();
     e.preventDefault();
     const btnMore = document.getElementById('btnBcMore');
-    const localPath = await __haystackAbs(rel || '');
-    const relPath = rel || '';
-    setTimeout(() => showMoreMenu(btnMore, localPath, relPath, true), 0);
+    const localPath = await __haystackAbs(navPath);
+    setTimeout(() => showMoreMenu(btnMore, localPath, rel, true), 0);
   });
   // 创建文件菜单
-  setupCreateMenu(rel);
+  setupCreateMenu(navPath);
 }
 
 const FILE_TEMPLATES = [
@@ -1005,7 +1012,7 @@ const FILE_TEMPLATES = [
   { label: 'Word 文档', ext: 'docx', icon: SVG.doc, base64: true, content: 'DOCX_B64' },
 ];
 
-function setupCreateMenu(rel) {
+function setupCreateMenu(navPath) {
   // 上次的菜单挂在 body 下；renderBreadcrumb 每次又在面包屑里新建一个同 id 元素,
   // 先移除残留的，避免 id 冲突
   document.querySelectorAll('.create-menu').forEach(m => {
@@ -1031,7 +1038,7 @@ function setupCreateMenu(rel) {
     item.addEventListener('click', (e) => {
       e.stopPropagation();
       menu.classList.remove('open');
-      createFile(rel, t);
+      createFile(navPath, t);
     });
     menu.appendChild(item);
   }
@@ -1116,19 +1123,21 @@ function showNameDialog(title, defaultValue, onConfirm) {
   setTimeout(() => input.focus(), 50);
 }
 
-async function createFile(rel, template) {
+async function createFile(navPath, template) {
+  const { rootIdx, rel } = parseNavPath(navPath);
+  const rootParam = `?root=${rootIdx}`;
   if (template.isDir) {
     showNameDialog('新建文件夹', '', async (name) => {
       try {
-        const r = await fetch('/www/_create', {
+        const r = await fetch('/www/_create' + rootParam, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ dir: rel + name, name: '.gitkeep', content: '' }),
+          body: JSON.stringify({ dir: (rel || '') + name, name: '.gitkeep', content: '' }),
         });
         const d = await r.json();
         if (d.error) { showToast('创建失败: ' + d.error); return; }
-        Object.keys(dirCache).forEach(k => { if (k.startsWith(rel + '|')) delete dirCache[k]; });
-        await renderFiles(rel);
+        Object.keys(dirCache).forEach(k => { if (k.startsWith(navPath + '|')) delete dirCache[k]; });
+        await renderFiles(navPath);
         showToast('文件夹已创建');
       } catch { showToast('创建失败'); }
     });
@@ -1137,25 +1146,26 @@ async function createFile(rel, template) {
   if (template.base64) {
     showNameDialog('新建 ' + template.label, '未命名.' + template.ext, async (name) => {
       try {
-        const r = await fetch('/www/_create', {
+        const r = await fetch('/www/_create' + rootParam, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ dir: rel, name, base64: true, content: FILE_TEMPLATE_B64[template.ext] }),
+          body: JSON.stringify({ dir: rel || '', name, base64: true, content: FILE_TEMPLATE_B64[template.ext] }),
         });
         const d = await r.json();
         if (d.error) { showToast('创建失败: ' + d.error); return; }
-        Object.keys(dirCache).forEach(k => { if (k.startsWith(rel + '|')) delete dirCache[k]; });
-        await renderFiles(rel);
+        Object.keys(dirCache).forEach(k => { if (k.startsWith(navPath + '|')) delete dirCache[k]; });
+        await renderFiles(navPath);
         showToast('文件已创建');
       } catch { showToast('创建失败'); }
     });
   } else {
     // 文本文件：打开编辑器弹窗
-    showCreateEditor(rel, template);
+    showCreateEditor(navPath, template);
   }
 }
 
-function showCreateEditor(rel, template) {
+function showCreateEditor(navPath, template) {
+  const { rel } = parseNavPath(navPath);
   const old = document.getElementById('preview-modal');
   if (old) old.remove();
 
@@ -1209,16 +1219,16 @@ function showCreateEditor(rel, template) {
     btnSave.disabled = true;
     btnSave.textContent = '创建中...';
     try {
-      const r = await fetch('/www/_create', {
+      const r = await fetch('/www/_create?root=' + currentRootIdx, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ dir: rel, name, content: textarea.value }),
+        body: JSON.stringify({ dir: rel || '', name, content: textarea.value }),
       });
       const d = await r.json();
       if (d.error) { showToast('创建失败: ' + d.error); btnSave.disabled = false; btnSave.textContent = '创建'; return; }
       overlay.remove();
-      Object.keys(dirCache).forEach(k => { if (k.startsWith(rel + '|')) delete dirCache[k]; });
-      await renderFiles(rel);
+      Object.keys(dirCache).forEach(k => { if (k.startsWith(navPath + '|')) delete dirCache[k]; });
+      await renderFiles(navPath);
       showToast('文件已创建');
     } catch { showToast('创建失败'); btnSave.disabled = false; btnSave.textContent = '创建'; }
   });
@@ -1241,16 +1251,17 @@ function showCreateEditor(rel, template) {
 let currentViewMode = localStorage.getItem('hxjs_viewMode') || 'list';
 let currentSort = localStorage.getItem('hxjs_sort') || 'name';
 
-async function renderFiles(rel) {
+async function renderFiles(navPath) {
   const el = document.getElementById('content');
   el.innerHTML = '<div class="empty-msg">加载中...</div>';
-  renderBreadcrumb(rel);
-  highlightTree(rel);
-  document.title = rel ? `Haystack / ${rel}` : 'Haystack';
+  renderBreadcrumb(navPath);
+  highlightTree(navPath);
+  const { rel } = parseNavPath(navPath);
+  document.title = rel ? `Haystack / ${navPath}` : 'Haystack';
   if (typeof buildViewSortMenu === 'function') buildViewSortMenu();
 
   let items;
-  try { items = await fetchDir(rel); } catch (e) {
+  try { items = await fetchDir(navPath); } catch (e) {
     el.innerHTML = `<div class="empty-msg">加载失败 (${e.message})</div>`; return;
   }
   if (items.length === 0) { el.innerHTML = '<div class="empty-msg">空目录</div>'; return; }
@@ -1269,13 +1280,14 @@ async function renderFiles(rel) {
   }
 
   if (currentViewMode === 'list' || currentViewMode === 'thumb-sm') {
-    renderListView(el, items, rel);
+    renderListView(el, items, navPath);
   } else {
-    renderThumbView(el, items, rel, true);
+    renderThumbView(el, items, navPath, true);
   }
 }
 
-async function renderListView(el, items, rel) {
+async function renderListView(el, items, navPath) {
+  const { rootIdx, rel } = parseNavPath(navPath);
   const listEl = document.createElement('div');
   listEl.className = 'file-list';
 
@@ -1284,7 +1296,7 @@ async function renderListView(el, items, rel) {
     const ph = parent ? parent + '/' : '';
     const up = document.createElement('a');
     up.className = 'file-item';
-    up.href = `#/${ph}`;
+    up.href = `#/${makeNavPath(rootIdx, ph)}`;
     up.innerHTML = `<div class="file-icon">${SVG.back}</div><div class="file-name clickable">..</div>
       <div class="file-meta file-size"></div><div class="file-meta file-date"></div>`;
     listEl.appendChild(up);
@@ -1292,9 +1304,11 @@ async function renderListView(el, items, rel) {
 
   for (const item of items) {
     const isDir = item.type === 'directory';
-    const filePath = `${BASE}${rel}${item.name}`;
+    const itemNavPath = makeNavPath(rootIdx, (rel || '') + item.name);
+    const itemNavPathDir = makeNavPath(rootIdx, (rel || '') + item.name + '/');
+    const filePath = `${BASE}${itemNavPath}`;
     const fullUrl = location.origin + filePath;
-    const localPath = await __haystackAbs(rel + item.name);
+    const localPath = await __haystackAbs(itemNavPath);
     const icon = isDir ? SVG.folder : fileIcon(item.name);
     const size = isDir ? '' : fmtSize(item.size || 0);
     const date = fmtDate(item.mtime);
@@ -1337,7 +1351,7 @@ async function renderListView(el, items, rel) {
     if (isDir) {
       nameEl.classList.add('clickable');
       row.style.cursor = 'pointer';
-      row.addEventListener('click', () => { location.hash = `#/${rel}${item.name}/`; });
+      row.addEventListener('click', () => { location.hash = `#/${itemNavPathDir}`; });
     } else {
       nameEl.classList.add('clickable');
       row.style.cursor = 'pointer';
@@ -1349,7 +1363,7 @@ async function renderListView(el, items, rel) {
     nameWrap.appendChild(nameEl);
 
     if (isDir) {
-      nameWrap.appendChild(buildDirActions(localPath, rel + item.name + '/'));
+      nameWrap.appendChild(buildDirActions(localPath, itemNavPathDir));
     } else {
       nameWrap.appendChild(buildActions(filePath, fullUrl, localPath, item.name));
     }
@@ -1370,13 +1384,14 @@ async function renderListView(el, items, rel) {
   el.appendChild(listEl);
 }
 
-async function renderThumbView(el, items, rel, isLarge) {
+async function renderThumbView(el, items, navPath, isLarge) {
+  const { rootIdx, rel } = parseNavPath(navPath);
   // 上级目录
   if (rel) {
     const parent = rel.split('/').filter(Boolean).slice(0, -1).join('/');
     const ph = parent ? parent + '/' : '';
     const backLink = document.createElement('a');
-    backLink.href = `#/${ph}`;
+    backLink.href = `#/${makeNavPath(rootIdx, ph)}`;
     backLink.style.cssText = 'display:flex;align-items:center;gap:6px;padding:10px 0;color:#555;text-decoration:none;font-size:14px;width:100%;white-space:nowrap;';
     backLink.innerHTML = `<span style="flex-shrink:0;display:flex;align-items:center;">${SVG.back}</span> 返回上级`;
     el.appendChild(backLink);
@@ -1388,7 +1403,9 @@ async function renderThumbView(el, items, rel, isLarge) {
 
   for (const item of items) {
     const isDir = item.type === 'directory';
-    const filePath = `${BASE}${rel}${item.name}`;
+    const itemNavPath = makeNavPath(rootIdx, (rel || '') + item.name);
+    const itemNavPathDir = makeNavPath(rootIdx, (rel || '') + item.name + '/');
+    const filePath = `${BASE}${itemNavPath}`;
     const ext = item.name.split('.').pop().toLowerCase();
     const isImage = !isDir && IMAGE_EXTS.has(ext);
     const inline = !isDir && canOpenInline(item.name);
@@ -1436,12 +1453,12 @@ async function renderThumbView(el, items, rel, isLarge) {
     card.append(imgWrap, label);
 
     if (isLarge) {
-      const localPath = await __haystackAbs(rel + item.name);
+      const localPath = await __haystackAbs(itemNavPath);
       const fullUrl = location.origin + filePath;
       const popup = document.createElement('div');
       popup.className = 'thumb-actions-popup';
       if (isDir) {
-        popup.appendChild(buildDirActions(localPath, rel + item.name + '/'));
+        popup.appendChild(buildDirActions(localPath, itemNavPathDir));
       } else {
         popup.appendChild(buildActions(filePath, fullUrl, localPath, item.name));
       }
@@ -1490,7 +1507,7 @@ async function renderThumbView(el, items, rel, isLarge) {
     }
 
     if (isDir) {
-      card.addEventListener('click', () => { location.hash = `#/${rel}${item.name}/`; });
+      card.addEventListener('click', () => { location.hash = `#/${itemNavPathDir}`; });
     } else {
       card.addEventListener('click', () => { previewFile(filePath, item.name); });
     }
@@ -2423,10 +2440,11 @@ async function doSearch(q) {
   searchAbort = new AbortController();
   const signal = searchAbort.signal;
   searchSelectedIdx = -1;
-  const dir = pathFromHash();
+  const navPath = pathFromHash();
+  const { rootIdx, rel } = parseNavPath(navPath);
   searchResults.innerHTML = '<div class="sr-loading">搜索中...</div>';
   try {
-    const r = await fetch(`/www/_search?q=${encodeURIComponent(q)}&dir=${encodeURIComponent(dir)}`, { signal });
+    const r = await fetch(`/www/_search?q=${encodeURIComponent(q)}&dir=${encodeURIComponent(rel)}&root=${rootIdx}`, { signal });
     if (!r.ok) throw new Error(r.status);
     const items = await r.json();
     if (items.length === 0) {
@@ -2461,15 +2479,16 @@ async function doSearch(q) {
       row.addEventListener('click', () => {
         searchResults.innerHTML = '';
         searchInput.value = '';
+        const searchRoot = currentRootIdx;
         if (item.type === 'directory') {
           pendingHighlight = item.name;
           const parent = item.path.substring(0, item.path.lastIndexOf('/'));
           const parentDir = parent.substring(0, parent.lastIndexOf('/') + 1);
-          location.hash = '#/' + parentDir;
+          location.hash = '#/' + makeNavPath(searchRoot, parentDir);
         } else {
           pendingHighlight = item.name;
           const dir = item.path.substring(0, item.path.lastIndexOf('/') + 1);
-          location.hash = '#/' + dir;
+          location.hash = '#/' + makeNavPath(searchRoot, dir);
         }
       });
 
@@ -2481,6 +2500,20 @@ async function doSearch(q) {
   }
 }
 
+// ---- 多根目录辅助 ----
+let currentRootIdx = 0;
+
+function parseNavPath(navPath) {
+  if (!navPath) return { rootIdx: 0, rel: '' };
+  const m = navPath.match(/^(\d+)\/(.*)$/);
+  if (m) return { rootIdx: parseInt(m[1]), rel: m[2] || '' };
+  // 旧格式(无 root 前缀),默认根 0
+  return { rootIdx: 0, rel: navPath };
+}
+function makeNavPath(rootIdx, rel) {
+  return rootIdx + '/' + (rel || '');
+}
+
 // ---- 导航 ----
 function pathFromHash() {
   return decodeURIComponent(location.hash.replace(/^#\/?/, ''));
@@ -2489,37 +2522,50 @@ function navigate(rel) {
   location.hash = '#/' + rel;
 }
 
-async function expandTreeTo(rel) {
+async function expandTreeTo(navPath) {
+  const { rootIdx, rel } = parseNavPath(navPath);
   const parts = rel.split('/').filter(Boolean);
-  let acc = '';
+
+  // 先展开根节点
+  const rootNav = makeNavPath(rootIdx, '');
+  await expandOneLevel(rootNav, 1);
+
+  // 逐层展开子目录
+  let accumulatedRel = '';
   for (const part of parts) {
-    acc += part + '/';
-    let row = document.querySelector(`.tree-item[data-path="${CSS.escape(acc)}"]`);
-    if (!row) {
-      // 父级节点还没加载，先 build 上一层
-      const parentAcc = acc.slice(0, acc.slice(0, -1).lastIndexOf('/') + 1);
-      const parentRow = document.querySelector(`.tree-item[data-path="${CSS.escape(parentAcc || '')}"]`);
+    accumulatedRel += part + '/';
+    await expandOneLevel(makeNavPath(rootIdx, accumulatedRel), accumulatedRel.split('/').filter(Boolean).length);
+  }
+}
+
+async function expandOneLevel(levelNav, depth) {
+  let row = document.querySelector(`.tree-item[data-path="${CSS.escape(levelNav)}"]`);
+  if (!row) {
+    // 父级节点还没加载，先 build 上一层
+    const parentNav = levelNav.slice(0, levelNav.slice(0, -1).lastIndexOf('/') + 1);
+    if (parentNav) {
+      const parentRow = document.querySelector(`.tree-item[data-path="${CSS.escape(parentNav)}"]`);
       if (parentRow) {
         const parentChildren = parentRow.nextElementSibling;
         if (parentChildren && parentChildren.children.length === 0) {
-          await buildTreeLevel(parentChildren, parentAcc, parentAcc.split('/').filter(Boolean).length);
+          await buildTreeLevel(parentChildren, parentNav, depth - 1);
         }
       }
-      row = document.querySelector(`.tree-item[data-path="${CSS.escape(acc)}"]`);
     }
-    if (row) {
-      const children = row.nextElementSibling;
-      if (children) {
-        if (!children.classList.contains('open')) {
-          children.classList.add('open');
-          const toggle = row.querySelector('.tree-toggle');
-          if (toggle) toggle.classList.add('open');
-        }
-        if (children.children.length === 0) {
-          await buildTreeLevel(children, acc, acc.split('/').filter(Boolean).length);
-          const toggle = row.querySelector('.tree-toggle');
-          if (children.children.length === 0 && toggle) toggle.classList.add('empty');
-        }
+    row = document.querySelector(`.tree-item[data-path="${CSS.escape(levelNav)}"]`);
+  }
+  if (row) {
+    const children = row.nextElementSibling;
+    if (children && children.classList.contains('tree-children')) {
+      if (!children.classList.contains('open')) {
+        children.classList.add('open');
+        const toggle = row.querySelector('.tree-toggle');
+        if (toggle) toggle.classList.add('open');
+      }
+      if (children.children.length === 0) {
+        await buildTreeLevel(children, levelNav, depth);
+        const toggle = row.querySelector('.tree-toggle');
+        if (children.children.length === 0 && toggle) toggle.classList.add('empty');
       }
     }
   }
@@ -2528,12 +2574,62 @@ async function expandTreeTo(rel) {
 function collapseAllTree() {
   document.querySelectorAll('.tree-children.open').forEach(el => el.classList.remove('open'));
   document.querySelectorAll('.tree-toggle.open').forEach(el => el.classList.remove('open'));
-  highlightTree('');
+}
+
+async function rebuildTree() {
+  const tree = document.getElementById('tree');
+  tree.innerHTML = '';
+  delete tree.dataset.loaded;
+  const cfg = await window.__haystack.getCfg();
+  for (let i = 0; i < cfg.roots.length; i++) {
+    const root = cfg.roots[i];
+    const navPath = makeNavPath(i, '');
+
+    const node = document.createElement('div');
+    const row = document.createElement('div');
+    row.className = 'tree-item tree-root-item';
+    row.dataset.path = navPath;
+    row.style.paddingLeft = '20px';
+
+    const toggle = document.createElement('span');
+    toggle.className = 'tree-toggle';
+    toggle.innerHTML = '<svg width="10" height="10" viewBox="0 0 10 10"><path d="M3 1.5l4 3.5-4 3.5" stroke="#999" stroke-width="1.5" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+
+    const icon = document.createElement('span');
+    icon.className = 'tree-icon';
+    icon.innerHTML = SVG.folder;
+
+    const label = document.createElement('span');
+    label.className = 'tree-label';
+    label.textContent = root.name || root.path;
+    label.style.fontWeight = '500';
+
+    row.append(toggle, icon, label);
+
+    const children = document.createElement('div');
+    children.className = 'tree-children';
+
+    row.addEventListener('click', async (e) => {
+      e.stopPropagation();
+      if (!children.dataset.loaded) {
+        await buildTreeLevel(children, navPath, 1);
+        if (children.children.length === 0) toggle.classList.add('empty');
+      }
+      const willOpen = !children.classList.contains('open');
+      children.classList.toggle('open', willOpen);
+      toggle.classList.toggle('open', willOpen);
+      _suppressExpandTree = true;
+      navigate(navPath);
+    });
+
+    node.append(row, children);
+    tree.appendChild(node);
+  }
 }
 
 document.getElementById('btnHome').addEventListener('click', () => {
   collapseAllTree();
-  location.hash = '#/';
+  location.hash = '#/0/';
 });
 
 const btnToggleHidden = document.getElementById('btnToggleHidden');
@@ -2549,11 +2645,12 @@ btnToggleHidden.addEventListener('click', async () => {
   const tree = document.getElementById('tree');
   tree.innerHTML = '';
   delete tree.dataset.loaded;
-  await buildTreeLevel(tree, '', 0);
-  const p = pathFromHash();
-  await renderFiles(p);
-  await expandTreeTo(p);
-  highlightTree(p);
+  const navPath = pathFromHash();
+  await rebuildTree();
+  const { rootIdx, rel } = parseNavPath(navPath);
+  await renderFiles(navPath);
+  await expandTreeTo(navPath);
+  highlightTree(navPath);
 });
 
 function highlightFileItem(name) {
@@ -2571,14 +2668,16 @@ function highlightFileItem(name) {
 }
 
 window.addEventListener('hashchange', async () => {
-  const p = pathFromHash();
-  await renderFiles(p);
+  const navPath = pathFromHash();
+  const { rootIdx } = parseNavPath(navPath);
+  currentRootIdx = rootIdx;
+  await renderFiles(navPath);
   if (_suppressExpandTree) {
     _suppressExpandTree = false;
   } else {
-    await expandTreeTo(p);
+    await expandTreeTo(navPath);
   }
-  highlightTree(p);
+  highlightTree(navPath);
   if (pendingHighlight) {
     setTimeout(() => { highlightFileItem(pendingHighlight); pendingHighlight = null; }, 100);
   }
@@ -2614,10 +2713,14 @@ document.addEventListener('keydown', (e) => {
   // Backspace 返回上级（优先处理，不依赖 items）
   if (e.key === 'Backspace') {
     e.preventDefault();
-    const rel = pathFromHash();
-    if (rel) {
-      const parent = rel.split('/').filter(Boolean).slice(0, -1).join('/');
-      location.hash = '#/' + (parent ? parent + '/' : '');
+    const navPath = pathFromHash();
+    if (navPath) {
+      const { rootIdx, rel } = parseNavPath(navPath);
+      if (rel) {
+        const parts = rel.split('/').filter(Boolean);
+        const parent = parts.slice(0, -1).join('/');
+        location.hash = '#/' + (parent ? makeNavPath(rootIdx, parent + '/') : makeNavPath(rootIdx, ''));
+      }
     }
     return;
   }
@@ -2706,11 +2809,16 @@ document.addEventListener('mouseup', () => {
 
 // 初始化
 (async () => {
-  await buildTreeLevel(document.getElementById('tree'), '', 0);
-  const p = pathFromHash();
-  await renderFiles(p);
-  if (p) await expandTreeTo(p);
-  highlightTree(p);
+  try {
+    await rebuildTree();
+    const navPath = pathFromHash();
+    await renderFiles(navPath);
+    if (navPath) await expandTreeTo(navPath);
+    highlightTree(navPath);
+  } catch (e) {
+    console.error('[init]', e);
+    document.getElementById('content').innerHTML = `<div class="empty-msg">初始化失败: ${e.message}<br><span style="font-size:12px;color:#999;">${e.stack}</span></div>`;
+  }
 })();
 
 // ============================================================
@@ -2937,9 +3045,10 @@ window.__haystackCopyUrl = async function (absPath) {
       return p === rp || p.startsWith(rp.endsWith('/') ? rp : rp + '/');
     });
     if (!root) return { error: '该路径不在任何已配置的根目录下' };
+    const rootIdx = cfg.roots.indexOf(root);
     const rp = (root.path || '').replace(/\\/g, '/');
     let rel = p.slice(rp.length).replace(/^\/+/, '');
-    return { rel, abs: p };
+    return { rel, abs: p, rootIdx };
   }
 
   async function submit() {
@@ -2947,6 +3056,7 @@ window.__haystackCopyUrl = async function (absPath) {
     if (!r) return;
     if (r.error) { err.textContent = r.error; return; }
     let rel = r.rel;
+    const rootIdx = r.rootIdx;
     // 是否文件:输入未以 / 结尾时,尝试 list_dir;失败则视为文件,跳到父级并预览
     const trailingSlash = rel.endsWith('/');
     if (!trailingSlash && rel !== '') {
@@ -2959,11 +3069,11 @@ window.__haystackCopyUrl = async function (absPath) {
         const lastSlash = rel.lastIndexOf('/');
         const parent = lastSlash >= 0 ? rel.slice(0, lastSlash + 1) : '';
         const filename = lastSlash >= 0 ? rel.slice(lastSlash + 1) : rel;
-        location.hash = '#/' + parent;
+        location.hash = '#/' + makeNavPath(rootIdx, parent);
         close();
         // 等待目录加载,再触发预览
         setTimeout(() => {
-          try { previewFile(BASE + parent + filename, filename); } catch (e) { console.error(e); }
+          try { previewFile(BASE + makeNavPath(rootIdx, parent) + filename, filename); } catch (e) { console.error(e); }
         }, 200);
         return;
       }
@@ -2972,7 +3082,7 @@ window.__haystackCopyUrl = async function (absPath) {
     } else {
       // 已带 /,直接当目录
     }
-    location.hash = '#/' + rel;
+    location.hash = '#/' + makeNavPath(rootIdx, rel);
     close();
   }
 

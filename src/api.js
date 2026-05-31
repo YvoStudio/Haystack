@@ -18,11 +18,15 @@
     if (!cachedCfg) cachedCfg = await invoke('get_config');
     return cachedCfg;
   }
-  async function firstRoot() {
+  async function getRoot(idx) {
     const cfg = await getCfg();
-    const r = cfg.roots[0];
+    const r = cfg.roots[idx] || cfg.roots[0];
     if (!r) throw new Error('no root configured');
     return r.path;
+  }
+  function rootIdxFromUrl(u) {
+    const p = u.searchParams.get('root');
+    return p != null ? parseInt(p) : 0;
   }
   function isAbs(p) {
     return p.startsWith('/') || /^[A-Za-z]:[\\/]/.test(p);
@@ -51,14 +55,6 @@
   });
 
   window.__haystackInvalidateCfg = () => { cachedCfg = null; };
-  window.__haystack = { invoke, getCfg };
-
-  // 把"相对第一根的 rel"或绝对路径解析成绝对路径
-  window.__haystackAbs = async function (relOrAbs) {
-    if (!relOrAbs) return await firstRoot();
-    if (isAbs(relOrAbs)) return relOrAbs;
-    return joinAbs(await firstRoot(), relOrAbs);
-  };
 
   // ============================================================
   // 资源协议:走自定义 URI scheme `haystack-asset://`,scope 在 Rust 端校验。
@@ -67,11 +63,25 @@
   // ============================================================
   let cfgSync = null;
   let firstRootSync = null;
+  let rootsSync = [];
   let localIpSync = null;
   let httpPortSync = null;
+
+  window.__haystack = { invoke, getCfg, _rootsSync: rootsSync, _cfgSyncRef: () => cfgSync };
+
+  // 把"navPath (rootIdx/rel) 或 rel"解析成绝对路径
+  window.__haystackAbs = async function (navPath) {
+    if (!navPath) return await getRoot(0);
+    if (isAbs(navPath)) return navPath;
+    const m = navPath.match(/^(\d+)\/(.*)$/);
+    if (m) return joinAbs(await getRoot(parseInt(m[1])), m[2] || '');
+    return joinAbs(await getRoot(0), navPath);
+  };
+
   getCfg().then(cfg => {
     cfgSync = cfg;
     firstRootSync = cfg.roots[0]?.path || null;
+    rootsSync = cfg.roots.map(r => r.path);
     if (document.body) scan(document.body);
   });
   invoke('get_local_ip').then(ip => { localIpSync = ip; }).catch(() => {});
@@ -85,10 +95,20 @@
     });
   })(50);
 
-  // 把"相对第一根的 rel"或绝对路径生成 webview 能 fetch 的 asset URL
+  // 把"navPath (rootIdx/rel) 或 rel"生成 webview 能 fetch 的 asset URL
   function relToAssetUrl(rel) {
     if (!firstRootSync) return null;
-    const abs = isAbs(rel) ? rel : joinAbs(firstRootSync, rel);
+    // 解析 root 前缀
+    const m = rel.match(/^(\d+)\/(.*)$/);
+    let rootPath, actualRel;
+    if (m && rootsSync[m[1]]) {
+      rootPath = rootsSync[parseInt(m[1])];
+      actualRel = m[2];
+    } else {
+      rootPath = firstRootSync;
+      actualRel = rel;
+    }
+    const abs = isAbs(actualRel) ? actualRel : joinAbs(rootPath, actualRel);
     return convertFileSrc(abs, 'haystack-asset');
   }
   function rewriteSrcAttr(el) {
@@ -137,8 +157,11 @@
   async function openLocal(rel) {
     let cleaned = rel.replace(/^\/?www\//, '');
     try { cleaned = decodeURIComponent(cleaned); } catch {}
-    const root = await firstRoot();
-    const abs = isAbs(cleaned) ? cleaned : joinAbs(root, cleaned);
+    const m = cleaned.match(/^(\d+)\/(.*)$/);
+    let rootIdx = 0, actualRel = cleaned;
+    if (m) { rootIdx = parseInt(m[1]); actualRel = m[2]; }
+    const root = await getRoot(rootIdx);
+    const abs = isAbs(actualRel) ? actualRel : joinAbs(root, actualRel);
     await invoke('plugin:opener|open_path', { path: abs, with: null });
   }
   const origOpen = window.open.bind(window);
@@ -210,7 +233,8 @@
 
     if (p === '/www/_list_all') {
       const rel = u.searchParams.get('dir') || '';
-      const root = await firstRoot();
+      const rootIdx = rootIdxFromUrl(u);
+      const root = await getRoot(rootIdx);
       return tryInvoke(async () => {
         const items = await invoke('list_dir', { path: joinAbs(root, rel) });
         return items.map(it => ({ ...it, mtime: epochToIso(it.mtime) }));
@@ -220,7 +244,8 @@
     if (p === '/www/_search') {
       const rel = u.searchParams.get('dir') || '';
       const q = u.searchParams.get('q') || '';
-      const root = await firstRoot();
+      const rootIdx = rootIdxFromUrl(u);
+      const root = await getRoot(rootIdx);
       return tryInvoke(async () => {
         const hits = await invoke('search', { path: joinAbs(root, rel), q });
         return hits.map(h => ({ ...h, path: toRel(root, h.path), mtime: epochToIso(h.mtime) }));
@@ -229,7 +254,8 @@
 
     if (p === '/www/_create') {
       const body = await readBody(init);
-      const root = await firstRoot();
+      const rootIdx = rootIdxFromUrl(u);
+      const root = await getRoot(rootIdx);
       return tryInvoke(async () => {
         await invoke('create_file', {
           args: {
@@ -282,7 +308,7 @@
       const url = relToAssetUrl(rel);
       if (url) return orig(url, init);
       // 兜底:回到 asset:// (基本走不到这一步)
-      const root = await firstRoot();
+      const root = await getRoot(0);
       const abs = isAbs(rel) ? rel : joinAbs(root, rel);
       return orig(convertFileSrc(abs), init);
     }
