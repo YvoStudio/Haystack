@@ -279,6 +279,77 @@ pub async fn pick_folder(app: tauri::AppHandle) -> Result<Option<String>, String
     Ok(res.map(|fp| fp.to_string()))
 }
 
+/// 检测目录受哪种版本控制管理:返回 "git" / "svn" / ""(无)。
+/// 只看目录本身是否含 .git / .svn,符合"当前目录是否是 git/svn 目录"的语义。
+#[tauri::command]
+pub fn detect_vcs(store: State<'_, ConfigStore>, path: String) -> Result<&'static str, String> {
+    let p = PathBuf::from(&path);
+    ensure_within_roots(&store, &p)?;
+    // .git 可能是目录(普通仓库)或文件(submodule / worktree),exists() 都能命中
+    if p.join(".git").exists() {
+        return Ok("git");
+    }
+    if p.join(".svn").exists() {
+        return Ok("svn");
+    }
+    Ok("")
+}
+
+/// 在 `dir` 下跑一条命令,成功返回合并后的输出,失败返回错误输出。
+fn run_in(dir: &Path, program: &str, args: &[&str]) -> Result<String, String> {
+    let out = std::process::Command::new(program)
+        .args(args)
+        .current_dir(dir)
+        .output()
+        .map_err(|e| e.to_string())?;
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    let combined = format!("{stdout}{stderr}").trim().to_string();
+    if out.status.success() {
+        Ok(combined)
+    } else {
+        Err(if combined.is_empty() {
+            format!("{program} 退出码非 0")
+        } else {
+            combined
+        })
+    }
+}
+
+/// 版本控制的"更新"。`mode`:
+///   - "normal"  普通更新:git → `git pull --ff-only`;svn → `svn update`
+///   - "discard" 丢弃本地修改再更新:
+///       git → `git fetch --all` + `git reset --hard @{u}`(对齐上游,丢弃已跟踪文件的本地改动)
+///       svn → `svn revert -R .` + `svn update`
+/// 按顺序执行多条命令,任一失败即中止;返回各步非空输出拼接。
+#[tauri::command]
+pub fn vcs_update(
+    store: State<'_, ConfigStore>,
+    path: String,
+    kind: String,
+    mode: String,
+) -> Result<String, String> {
+    let p = PathBuf::from(&path);
+    ensure_within_roots(&store, &p)?;
+    let steps: Vec<Vec<&str>> = match (kind.as_str(), mode.as_str()) {
+        ("git", "normal") => vec![vec!["pull", "--ff-only"]],
+        ("git", "discard") => vec![vec!["fetch", "--all"], vec!["reset", "--hard", "@{u}"]],
+        ("svn", "normal") => vec![vec!["update"]],
+        ("svn", "discard") => vec![vec!["revert", "-R", "."], vec!["update"]],
+        _ => return Err(format!("unknown vcs kind/mode: {kind}/{mode}")),
+    };
+    let program = if kind == "git" { "git" } else { "svn" };
+    let mut outputs = Vec::new();
+    for args in &steps {
+        outputs.push(run_in(&p, program, args)?);
+    }
+    Ok(outputs
+        .into_iter()
+        .filter(|s| !s.is_empty())
+        .collect::<Vec<_>>()
+        .join(" | "))
+}
+
 /// 在指定目录下打开终端
 #[tauri::command]
 pub fn open_terminal(store: State<'_, ConfigStore>, path: String) -> Result<(), String> {

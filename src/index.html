@@ -347,6 +347,18 @@
   .more-menu-item:hover { background: #f5f5f5; }
   .more-menu-item svg { width: 16px; height: 16px; flex-shrink: 0; }
 
+  /* VCS 更新二级菜单 */
+  .vcs-parent { position: relative; }
+  .vcs-arrow { margin-left: auto; font-size: 11px; color: #999; }
+  .vcs-submenu {
+    position: absolute; top: -7px; width: 200px;
+    background: #fff; border-radius: 8px; box-shadow: 0 4px 16px rgba(0,0,0,0.12);
+    border: 1px solid #eee; z-index: 210; padding: 6px 0; display: none;
+  }
+  .vcs-submenu.to-left { right: 100%; }
+  .vcs-submenu.to-right { left: 100%; }
+  .vcs-parent:hover > .vcs-submenu { display: block; }
+
   /* 颜色标签 */
   .color-tag-row {
     display: flex; flex-wrap: wrap;
@@ -793,6 +805,46 @@ function showMoreMenu(btn, localPath, relPath, isDir) {
   document.body.appendChild(menu);
   setTimeout(() => menu.addEventListener('click', (e) => e.stopPropagation()), 0);
 
+  // 目录若为 git/svn 仓库,异步检测后把"更新"二级菜单插到菜单顶部
+  if (isDir && window.__haystack && window.__haystack.invoke) {
+    const vcsIcon = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none"><path d="M4 4v6a4 4 0 004 4h8" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/><path d="M14 10l4 4-4 4" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+    window.__haystack.invoke('detect_vcs', { path: localPath }).then(kind => {
+      // 菜单可能已关闭或被新菜单替换,避免插到错误的菜单上
+      if (!kind || menu !== activeMoreMenu) return;
+
+      function runUpdate(mode) {
+        closeMoreMenu();
+        const title = (kind === 'git' ? 'Git' : 'SVN') + (mode === 'discard' ? ' 丢弃本地修改并更新' : ' 更新');
+        // 点击即弹框显示进度,结果回来后原地更新内容
+        const update = showResultDialog(title + ' · 执行中…', '正在执行,请稍候…', false);
+        window.__haystack.invoke('vcs_update', { path: localPath, kind, mode })
+          .then(out => update(title, (out && out.trim()) || '已是最新', false))
+          .catch(err => update(title + ' · 失败', String(err), true));
+      }
+
+      const parent = document.createElement('div');
+      parent.className = 'more-menu-item vcs-parent';
+      parent.innerHTML = vcsIcon + (kind === 'git' ? 'Git 更新' : 'SVN 更新') + '<span class="vcs-arrow">▸</span>';
+
+      const sub = document.createElement('div');
+      // 子菜单默认右展;贴近右屏边缘时改为左展,避免溢出
+      const menuLeft = parseFloat(menu.style.left) || 0;
+      const toLeft = menuLeft + 190 + 200 > window.innerWidth;
+      sub.className = 'vcs-submenu ' + (toLeft ? 'to-left' : 'to-right');
+
+      [['普通更新', 'normal'], ['丢弃本地修改再更新', 'discard']].forEach(([text, mode]) => {
+        const opt = document.createElement('div');
+        opt.className = 'more-menu-item';
+        opt.textContent = text;
+        opt.addEventListener('click', (e) => { e.stopPropagation(); runUpdate(mode); });
+        sub.appendChild(opt);
+      });
+      parent.appendChild(sub);
+      parent.addEventListener('click', (e) => e.stopPropagation());
+      menu.insertBefore(parent, menu.firstChild);
+    }).catch(() => {});
+  }
+
   // 鼠标离开菜单后自动关闭（仅对文件行有效；面包屑等脱离行的场景下依赖点击外部关闭）
   if (fileRow) {
     menu.addEventListener('mouseleave', () => {
@@ -1121,6 +1173,52 @@ function showNameDialog(title, defaultValue, onConfirm) {
   overlay.addEventListener('click', (e) => { if (e.target === overlay) overlay.remove(); });
   document.body.appendChild(overlay);
   setTimeout(() => input.focus(), 50);
+}
+
+// 命令执行结果弹框:多行输出用等宽 pre 展示,可滚动
+function showResultDialog(title, text, isError) {
+  const old = document.getElementById('preview-modal');
+  if (old) old.remove();
+
+  const overlay = document.createElement('div');
+  overlay.id = 'preview-modal';
+  overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.15);z-index:1000;display:flex;align-items:flex-start;justify-content:center;padding-top:80px;';
+
+  const box = document.createElement('div');
+  box.style.cssText = 'background:#fff;border-radius:12px;width:480px;max-width:90vw;padding:24px;box-shadow:0 8px 30px rgba(0,0,0,0.15);';
+
+  const titleEl = document.createElement('div');
+  titleEl.style.cssText = 'font-size:15px;font-weight:600;margin-bottom:14px;color:' + (isError ? '#e5484d' : '#333') + ';';
+  titleEl.textContent = title;
+
+  const pre = document.createElement('pre');
+  pre.style.cssText = 'margin:0;max-height:50vh;overflow:auto;background:#f6f6f6;border-radius:8px;padding:12px;font-size:12px;line-height:1.5;color:#333;white-space:pre-wrap;word-break:break-word;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;';
+  pre.textContent = text || '(无输出)';
+
+  const btnRow = document.createElement('div');
+  btnRow.style.cssText = 'display:flex;justify-content:flex-end;margin-top:18px;';
+
+  const btnOk = document.createElement('button');
+  btnOk.style.cssText = 'border:none;background:#007aff;color:#fff;padding:7px 20px;border-radius:8px;font-size:13px;font-weight:500;cursor:pointer;transition:background 0.15s;';
+  btnOk.textContent = '关闭';
+  btnOk.onmouseenter = () => btnOk.style.background = '#0063d1';
+  btnOk.onmouseleave = () => btnOk.style.background = '#007aff';
+  btnOk.addEventListener('click', () => overlay.remove());
+
+  btnRow.appendChild(btnOk);
+  box.append(titleEl, pre, btnRow);
+  overlay.appendChild(box);
+  overlay.addEventListener('click', (e) => { if (e.target === overlay) overlay.remove(); });
+  const handler = (e) => { if (e.key === 'Escape') { overlay.remove(); document.removeEventListener('keydown', handler); } };
+  document.addEventListener('keydown', handler);
+  document.body.appendChild(overlay);
+
+  // 返回更新句柄:异步任务完成后改写标题/正文,无需重建弹框
+  return function update(newTitle, newText, newIsError) {
+    titleEl.textContent = newTitle;
+    titleEl.style.color = newIsError ? '#e5484d' : '#333';
+    pre.textContent = newText || '(无输出)';
+  };
 }
 
 async function createFile(navPath, template) {
@@ -1625,42 +1723,26 @@ const HTML_EXTS = new Set(['html','htm']);
 
 function previewFile(url, name) {
   const ext = name.split('.').pop().toLowerCase();
-  if (IMAGE_EXTS.has(ext)) {
-    showImagePreview(url, name); return;
-  }
-  if (HTML_EXTS.has(ext)) {
-    showHtmlPreview(url, name); return;
-  }
-  if (MD_EXTS.has(ext)) {
-    showMarkdownPreview(url, name); return;
-  }
-  if (VIDEO_EXTS.has(ext)) {
-    showVideoPreview(url, name); return;
-  }
-  if (AUDIO_EXTS_PLAY.has(ext)) {
-    showAudioPreview(url, name); return;
-  }
-  if (TEXT_EXTS.has(ext)) {
-    showCodePreview(url, name); return;
-  }
-  if (ext === 'pdf') {
-    showPdfPreview(url, name); return;
-  }
-  // 二进制文件 → 只显示图标和大小
-  if (BINARY_EXTS.has(ext) || OFFICE_EXTS.has(ext)) {
-    const rel2 = pathFromHash();
-    const cached2 = dirCache[dirCacheKey(rel2)];
-    const fi = cached2 && cached2.find(f => f.name === name);
-    showLargeFilePreview(url, name, fi ? fi.size : 0); return;
-  }
-  // 其他文件：检查大小，>5MB 只显示图标和大小
   const rel = pathFromHash();
   const cached = dirCache[dirCacheKey(rel)];
   const fileInfo = cached && cached.find(f => f.name === name);
-  if (fileInfo && fileInfo.size > 5 * 1024 * 1024) {
-    showLargeFilePreview(url, name, fileInfo.size); return;
+  const size = fileInfo ? fileInfo.size : 0;
+
+  // 浏览器原生流式预览(image/video/audio/pdf):不 fetch 全文,大小再大也不会卡
+  if (IMAGE_EXTS.has(ext)) { showImagePreview(url, name); return; }
+  if (VIDEO_EXTS.has(ext)) { showVideoPreview(url, name); return; }
+  if (AUDIO_EXTS_PLAY.has(ext)) { showAudioPreview(url, name); return; }
+  if (ext === 'pdf') { showPdfPreview(url, name); return; }
+  // 二进制/办公文档:本来就只显示图标
+  if (BINARY_EXTS.has(ext) || OFFICE_EXTS.has(ext)) {
+    showLargeFilePreview(url, name, size); return;
   }
-  // 其他文件 → 以文本方式预览
+
+  // 以下都要把整文件 fetch 成文本 → > 5MB 直接拒,避免吃满内存和卡死 UI 线程
+  if (size > 5 * 1024 * 1024) { showLargeFilePreview(url, name, size); return; }
+
+  if (HTML_EXTS.has(ext)) { showHtmlPreview(url, name); return; }
+  if (MD_EXTS.has(ext)) { showMarkdownPreview(url, name); return; }
   showCodePreview(url, name);
 }
 
@@ -1819,6 +1901,9 @@ async function showCodePreview(url, name) {
   });
   header.insertBefore(btnCopyCode, header.lastElementChild);
 
+  // 超过这个字节数就跳过 hljs 高亮:hljs.highlightElement 对几百 KB 的 JSON/XML 是同步阻塞,会把 UI 卡死
+  const HIGHLIGHT_MAX = 300 * 1024;
+
   // JSON 格式化按钮
   let formatted = false;
   if (isJson) {
@@ -1837,9 +1922,11 @@ async function showCodePreview(url, name) {
         code.textContent = rawText;
         btnFmt.innerHTML = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none"><path d="M4 7h16M4 12h10M4 17h14" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>格式化';
       }
-      code.removeAttribute('data-highlighted');
-      code.className = 'language-json';
-      hljs.highlightElement(code);
+      if (code.textContent.length <= HIGHLIGHT_MAX) {
+        code.removeAttribute('data-highlighted');
+        code.className = 'language-json';
+        hljs.highlightElement(code);
+      }
     });
     header.insertBefore(btnFmt, header.lastElementChild);
   }
@@ -1859,9 +1946,11 @@ async function showCodePreview(url, name) {
         code.textContent = rawText;
         btnXmlFmt.innerHTML = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none"><path d="M4 7h16M4 12h10M4 17h14" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>格式化';
       }
-      code.removeAttribute('data-highlighted');
-      code.className = 'language-xml';
-      hljs.highlightElement(code);
+      if (code.textContent.length <= HIGHLIGHT_MAX) {
+        code.removeAttribute('data-highlighted');
+        code.className = 'language-xml';
+        hljs.highlightElement(code);
+      }
     });
     header.insertBefore(btnXmlFmt, header.lastElementChild);
   }
@@ -1883,10 +1972,18 @@ async function showCodePreview(url, name) {
     const r = await fetch(url);
     rawText = await r.text();
     code.textContent = rawText;
-    if (lang && hljs.getLanguage(lang)) {
-      code.className = 'language-' + lang;
+    // 内容超过软阈值 → 跳过 hljs(几百 KB+ 的同步高亮会卡死 UI),提示用户
+    if (rawText.length > HIGHLIGHT_MAX) {
+      const note = document.createElement('div');
+      note.style.cssText = 'padding:6px 14px;font-size:11.5px;color:#92632e;background:#fff7e6;border-bottom:1px solid #ffe7a8;';
+      note.textContent = `内容较大(${fmtSize(rawText.length)}),已跳过语法高亮`;
+      wrap.insertBefore(note, pre);
+    } else {
+      if (lang && hljs.getLanguage(lang)) {
+        code.className = 'language-' + lang;
+      }
+      hljs.highlightElement(code);
     }
-    hljs.highlightElement(code);
   } catch (e) {
     code.textContent = '加载失败: ' + e.message;
   }

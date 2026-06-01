@@ -144,6 +144,8 @@ pub fn run() {
             commands::copy_path,
             commands::reveal_in_file_manager,
             commands::open_terminal,
+            commands::detect_vcs,
+            commands::vcs_update,
             commands::pick_folder,
             config::get_config,
             config::set_config,
