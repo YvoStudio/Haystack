@@ -612,7 +612,20 @@ const TAG_COLORS = [
 ];
 
 function getColorTags() {
-  try { return JSON.parse(localStorage.getItem(TAG_KEY)) || {}; } catch { return {}; }
+  let tags;
+  try { tags = JSON.parse(localStorage.getItem(TAG_KEY)) || {}; } catch { return {}; }
+  // 多根目录重构前的 key 不带 root 前缀("Downloads/"),统一迁移成 navPath("0/Downloads/")
+  let dirty = false;
+  for (const k of Object.keys(tags)) {
+    if (!/^\d+\//.test(k)) {
+      const nk = makeNavPath(0, k);
+      if (!(nk in tags)) tags[nk] = tags[k];
+      delete tags[k];
+      dirty = true;
+    }
+  }
+  if (dirty) localStorage.setItem(TAG_KEY, JSON.stringify(tags));
+  return tags;
 }
 const SHOW_HIDDEN_KEY = 'haystack_show_hidden';
 function getShowHidden() { return localStorage.getItem(SHOW_HIDDEN_KEY) === '1'; }
@@ -909,12 +922,12 @@ async function fetchDir(navPath) {
     if (i.name.startsWith('.')) {
       if (BLACKLIST.whitelist && BLACKLIST.whitelist.includes(i.name)) return true;
       if (showHidden) return true;
-      const key = rel + i.name + (i.type === 'directory' ? '/' : '');
+      const key = makeNavPath(rootIdx, rel + i.name + (i.type === 'directory' ? '/' : ''));
       return !!getColorTag(key);
     }
     return true;
   });
-  const tagOf = (i) => getColorTag(rel + i.name + (i.type === 'directory' ? '/' : ''));
+  const tagOf = (i) => getColorTag(makeNavPath(rootIdx, rel + i.name + (i.type === 'directory' ? '/' : '')));
   filtered.sort((a, b) => {
     if (a.type === 'directory' && b.type !== 'directory') return -1;
     if (a.type !== 'directory' && b.type === 'directory') return 1;
@@ -1016,7 +1029,7 @@ function renderBreadcrumb(navPath) {
   const rootName = roots[rootIdx] ? (roots[rootIdx].name || '根' + rootIdx) : '根' + rootIdx;
   const parts = rel.split('/').filter(Boolean);
   let html = '';
-  const currentColor = getColorTag(rel);
+  const currentColor = getColorTag(navPath);
   if (currentColor) {
     html += `<span class="bc-color-dot" title="当前目录颜色标签" style="width:12px;height:12px;border-radius:50%;background:${currentColor};display:inline-block;margin-right:8px;flex-shrink:0;"></span>`;
   }
@@ -1026,7 +1039,7 @@ function renderBreadcrumb(navPath) {
     acc += p + '/';
     html += `<span>/</span><a href="#/${makeNavPath(rootIdx, acc)}">${p}</a>`;
   }
-  const starred = isBookmarked(rel);
+  const starred = isBookmarked(navPath);
   const starSvg = starred
     ? `<svg width="18" height="18" viewBox="0 0 24 24"><path d="M12 2l2.9 6.3 6.6.8-4.9 4.5 1.3 6.9L12 17.3 6.1 20.5l1.3-6.9L2.5 9.1l6.6-.8z" fill="#f59e0b" stroke="#f59e0b" stroke-width="1" stroke-linejoin="round"/></svg>`
     : `<svg width="18" height="18" viewBox="0 0 24 24"><path d="M12 2l2.9 6.3 6.6.8-4.9 4.5 1.3 6.9L12 17.3 6.1 20.5l1.3-6.9L2.5 9.1l6.6-.8z" fill="none" stroke="#aaa" stroke-width="1.5" stroke-linejoin="round"/></svg>`;
@@ -1044,7 +1057,7 @@ function renderBreadcrumb(navPath) {
     e.preventDefault();
     const btnMore = document.getElementById('btnBcMore');
     const localPath = await __haystackAbs(navPath);
-    setTimeout(() => showMoreMenu(btnMore, localPath, rel, true), 0);
+    setTimeout(() => showMoreMenu(btnMore, localPath, navPath, true), 0);
   });
   // 创建文件菜单
   setupCreateMenu(navPath);
@@ -1438,9 +1451,8 @@ async function renderListView(el, items, navPath) {
     nameEl.textContent = item.name;
     nameEl.title = item.name;
 
-    // 颜色标签
-    const itemRelPath = isDir ? rel + item.name + '/' : rel + item.name;
-    const colorDot = createColorDot(itemRelPath);
+    // 颜色标签(key 统一用带 root 前缀的 navPath)
+    const colorDot = createColorDot(isDir ? itemNavPathDir : itemNavPath);
     if (colorDot) nameEl.appendChild(colorDot);
 
     const fileExt = item.name.split('.').pop().toLowerCase();
@@ -2249,8 +2261,12 @@ const BM_KEY = 'hxjs_bookmarks';
 function getBookmarks() {
   try {
     const raw = JSON.parse(localStorage.getItem(BM_KEY)) || [];
-    // 兼容旧格式：字符串 → 对象
-    return raw.map(b => typeof b === 'string' ? { path: b, type: 'directory' } : b);
+    // 兼容旧格式：字符串 → 对象;多根重构前的路径不带 root 前缀,统一补成 navPath
+    return raw.map(b => {
+      const bm = typeof b === 'string' ? { path: b, type: 'directory' } : b;
+      if (bm.path && !/^\d+\//.test(bm.path)) bm.path = makeNavPath(0, bm.path);
+      return bm;
+    });
   } catch { return []; }
 }
 function saveBookmarks(list) {
@@ -2278,8 +2294,10 @@ function renderBookmarkItem(body, bm) {
 
   const label = document.createElement('span');
   label.className = 'bm-path';
-  label.textContent = bm.path ? '~ / ' + bm.path.replace(/\/$/, '').replace(/\//g, ' / ') : '~';
-  label.title = bm.path || '/';
+  // 显示时去掉 root 前缀("0/Downloads/" → "Downloads/")
+  const bmRel = parseNavPath(bm.path || '').rel;
+  label.textContent = bmRel ? '~ / ' + bmRel.replace(/\/$/, '').replace(/\//g, ' / ') : '~';
+  label.title = bmRel || '/';
 
   const del = document.createElement('button');
   del.className = 'bm-del';
