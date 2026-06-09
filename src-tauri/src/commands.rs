@@ -321,6 +321,9 @@ fn run_in(dir: &Path, program: &str, args: &[&str]) -> Result<String, String> {
         .args(args)
         .current_dir(dir)
         .env("PATH", spawn_path())
+        // GUI 应用未继承 locale,svn 在 C/ASCII 的 LC_CTYPE 下会把中文等非 ASCII
+        // 字符转义成 {U+XXXX}。设成 UTF-8 charset 即可正常显示,消息语言保持不变。
+        .env("LC_CTYPE", "en_US.UTF-8")
         .output()
         .map_err(|e| {
             if e.kind() == std::io::ErrorKind::NotFound {
