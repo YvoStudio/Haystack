@@ -295,13 +295,40 @@ pub fn detect_vcs(store: State<'_, ConfigStore>, path: String) -> Result<&'stati
     Ok("")
 }
 
+/// macOS GUI 应用从 launchd 继承的 PATH 只有系统目录(/usr/bin:/bin:...),
+/// 不含 Homebrew / MacPorts,会导致 brew 安装的 svn 等命令 spawn 失败(os error 2)。
+/// 把常见安装目录补到 PATH 末尾后返回;其他平台原样返回。
+fn spawn_path() -> std::ffi::OsString {
+    let base = std::env::var_os("PATH").unwrap_or_default();
+    if cfg!(target_os = "macos") {
+        let mut paths: Vec<PathBuf> = std::env::split_paths(&base).collect();
+        for extra in ["/opt/homebrew/bin", "/usr/local/bin", "/opt/local/bin"] {
+            let p = PathBuf::from(extra);
+            if p.exists() && !paths.contains(&p) {
+                paths.push(p);
+            }
+        }
+        if let Ok(joined) = std::env::join_paths(paths) {
+            return joined;
+        }
+    }
+    base
+}
+
 /// 在 `dir` 下跑一条命令,成功返回合并后的输出,失败返回错误输出。
 fn run_in(dir: &Path, program: &str, args: &[&str]) -> Result<String, String> {
     let out = std::process::Command::new(program)
         .args(args)
         .current_dir(dir)
+        .env("PATH", spawn_path())
         .output()
-        .map_err(|e| e.to_string())?;
+        .map_err(|e| {
+            if e.kind() == std::io::ErrorKind::NotFound {
+                format!("找不到 {program} 命令,请确认已安装")
+            } else {
+                e.to_string()
+            }
+        })?;
     let stdout = String::from_utf8_lossy(&out.stdout);
     let stderr = String::from_utf8_lossy(&out.stderr);
     let combined = format!("{stdout}{stderr}").trim().to_string();
