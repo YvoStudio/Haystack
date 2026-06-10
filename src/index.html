@@ -2649,7 +2649,8 @@ async function expandTreeTo(navPath) {
   let accumulatedRel = '';
   for (const part of parts) {
     accumulatedRel += part + '/';
-    await expandOneLevel(makeNavPath(rootIdx, accumulatedRel), accumulatedRel.split('/').filter(Boolean).length);
+    // depth 语义是"待构建子级的深度":展开第 k 层目录,其子级在第 k+1 层。
+    await expandOneLevel(makeNavPath(rootIdx, accumulatedRel), accumulatedRel.split('/').filter(Boolean).length + 1);
   }
 }
 
