@@ -1627,7 +1627,7 @@ checksum = "4f467dd6dccf739c208452f8014c75c18bb8301b050ad1cfb27153803edb0f51"
 
 [[package]]
 name = "haystack"
-version = "0.1.8"
+version = "0.1.9"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
