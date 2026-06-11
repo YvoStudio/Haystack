@@ -178,6 +178,10 @@
     transform: translateY(-1px); z-index: 10;
     background: #eeeeee;
   }
+  .thumb-card.highlight {
+    box-shadow: 0 0 0 2px #6d28d9;
+    background: #f3f0ff;
+  }
 
   /* 大缩略图 hover 时气泡显示的操作菜单 */
   .thumb-actions-popup {
@@ -1391,9 +1395,9 @@ async function renderFiles(navPath) {
   }
 
   if (currentViewMode === 'list' || currentViewMode === 'thumb-sm') {
-    renderListView(el, items, navPath);
+    await renderListView(el, items, navPath);
   } else {
-    renderThumbView(el, items, navPath, true);
+    await renderThumbView(el, items, navPath, true);
   }
 }
 
@@ -2595,15 +2599,20 @@ async function doSearch(q) {
         searchResults.innerHTML = '';
         searchInput.value = '';
         const searchRoot = currentRootIdx;
+        let dir;
         if (item.type === 'directory') {
-          pendingHighlight = item.name;
           const parent = item.path.substring(0, item.path.lastIndexOf('/'));
-          const parentDir = parent.substring(0, parent.lastIndexOf('/') + 1);
-          location.hash = '#/' + makeNavPath(searchRoot, parentDir);
+          dir = parent.substring(0, parent.lastIndexOf('/') + 1);
+        } else {
+          dir = item.path.substring(0, item.path.lastIndexOf('/') + 1);
+        }
+        const targetNav = makeNavPath(searchRoot, dir);
+        if (pathFromHash() === targetNav) {
+          // 已在目标目录,改 hash 不会触发 hashchange,直接滚动高亮
+          highlightFileItem(item.name);
         } else {
           pendingHighlight = item.name;
-          const dir = item.path.substring(0, item.path.lastIndexOf('/') + 1);
-          location.hash = '#/' + makeNavPath(searchRoot, dir);
+          location.hash = '#/' + targetNav;
         }
       });
 
@@ -2771,10 +2780,12 @@ btnToggleHidden.addEventListener('click', async () => {
 
 function highlightFileItem(name) {
   if (!name) return;
-  const items = document.querySelectorAll('.file-item');
+  const items = document.querySelectorAll('#content .file-item, #content .thumb-card');
   for (const item of items) {
-    const nameEl = item.querySelector('.file-name');
-    if (nameEl && nameEl.textContent === name) {
+    const itemName = item.classList.contains('thumb-card')
+      ? item.dataset.name
+      : item.querySelector('.file-name')?.textContent;
+    if (itemName === name) {
       item.classList.add('highlight');
       item.scrollIntoView({ block: 'center', behavior: 'smooth' });
       setTimeout(() => item.classList.remove('highlight'), 3000);
@@ -2795,7 +2806,9 @@ window.addEventListener('hashchange', async () => {
   }
   highlightTree(navPath);
   if (pendingHighlight) {
-    setTimeout(() => { highlightFileItem(pendingHighlight); pendingHighlight = null; }, 100);
+    // renderFiles 已 await 渲染完成,此时列表 DOM 一定存在
+    highlightFileItem(pendingHighlight);
+    pendingHighlight = null;
   }
 });
 
