@@ -425,7 +425,7 @@
     <div class="breadcrumb" id="breadcrumb"></div>
     <div class="search-wrap">
       <span style="position:relative;display:inline-flex;align-items:center;">
-        <input class="search-input" id="searchInput" type="text" placeholder="搜索文件...">
+        <input class="search-input" id="searchInput" type="text" placeholder="搜索当前目录…">
         <button id="searchClear" style="position:absolute;right:6px;border:none;background:none;cursor:pointer;color:#aaa;font-size:14px;display:none;padding:0 2px;">&times;</button>
       </span>
       <div class="search-results" id="searchResults"></div>
@@ -2537,9 +2537,19 @@ searchInput.addEventListener('keydown', (e) => {
     if (items[searchSelectedIdx]) items[searchSelectedIdx].scrollIntoView({ block: 'nearest' });
     return;
   }
-  if (e.key === 'Enter' && searchSelectedIdx >= 0 && items[searchSelectedIdx]) {
+  if (e.key === 'Enter') {
     e.preventDefault();
-    items[searchSelectedIdx].click();
+    if (searchSelectedIdx >= 0 && items[searchSelectedIdx]) {
+      // 方向键选中了某项:打开它
+      items[searchSelectedIdx].click();
+    } else if (items.length > 0) {
+      // 未选中但已有结果:打开第一条
+      items[0].click();
+    } else {
+      // 结果还没出来(防抖未触发):立即执行一次搜索
+      const q = searchInput.value.trim();
+      if (q) { clearTimeout(searchTimer); doSearch(q); }
+    }
     searchSelectedIdx = -1;
     return;
   }
@@ -2561,6 +2571,7 @@ async function doSearch(q) {
   searchSelectedIdx = -1;
   const navPath = pathFromHash();
   const { rootIdx, rel } = parseNavPath(navPath);
+  // 搜索范围限制在当前打开的目录(含其子目录),避免从根递归整棵树导致卡顿
   searchResults.innerHTML = '<div class="sr-loading">搜索中...</div>';
   try {
     const r = await fetch(`/www/_search?q=${encodeURIComponent(q)}&dir=${encodeURIComponent(rel)}&root=${rootIdx}`, { signal });
@@ -2598,17 +2609,22 @@ async function doSearch(q) {
       row.addEventListener('click', () => {
         searchResults.innerHTML = '';
         searchInput.value = '';
+        if (searchClear) searchClear.style.display = 'none';
         const searchRoot = currentRootIdx;
+        // 跳转到文件/目录所在位置并高亮定位(不打开预览)
         let dir;
         if (item.type === 'directory') {
-          const parent = item.path.substring(0, item.path.lastIndexOf('/'));
+          // 目录:定位到它的父目录并高亮该目录项
+          const parent = item.path.replace(/\/+$/, '');
           dir = parent.substring(0, parent.lastIndexOf('/') + 1);
         } else {
+          // 文件:定位到它所在的目录并高亮该文件
           dir = item.path.substring(0, item.path.lastIndexOf('/') + 1);
         }
         const targetNav = makeNavPath(searchRoot, dir);
-        if (pathFromHash() === targetNav) {
-          // 已在目标目录,改 hash 不会触发 hashchange,直接滚动高亮
+        const normNav = s => (s || '').replace(/\/+$/, '');
+        if (normNav(pathFromHash()) === normNav(targetNav)) {
+          // 已在目标目录(忽略尾斜杠差异):直接滚动并高亮
           highlightFileItem(item.name);
         } else {
           pendingHighlight = item.name;
@@ -2649,6 +2665,11 @@ function navigate(rel) {
 async function expandTreeTo(navPath) {
   const { rootIdx, rel } = parseNavPath(navPath);
   const parts = rel.split('/').filter(Boolean);
+
+  // 单路径展开:先折叠所有已展开分支,只保留到当前位置的这一条路径。
+  // 否则多次搜索跳转/导航后,被自动展开的分支会一直留着,导航树里
+  // 堆积大量并非根目录直属的子目录(如 svn 下的 chibo_arts 等)。
+  collapseAllTree();
 
   // 先展开根节点
   const rootNav = makeNavPath(rootIdx, '');
@@ -2778,20 +2799,22 @@ btnToggleHidden.addEventListener('click', async () => {
   highlightTree(navPath);
 });
 
-function highlightFileItem(name) {
+function highlightFileItem(name, attempt = 0) {
   if (!name) return;
   const items = document.querySelectorAll('#content .file-item, #content .thumb-card');
   for (const item of items) {
     const itemName = item.classList.contains('thumb-card')
       ? item.dataset.name
-      : item.querySelector('.file-name')?.textContent;
+      : item.querySelector('.file-name')?.textContent?.trim();
     if (itemName === name) {
       item.classList.add('highlight');
       item.scrollIntoView({ block: 'center', behavior: 'smooth' });
       setTimeout(() => item.classList.remove('highlight'), 3000);
-      break;
+      return;
     }
   }
+  // 列表可能还在异步渲染(切目录后),短暂重试以确保能定位并高亮
+  if (attempt < 20) setTimeout(() => highlightFileItem(name, attempt + 1), 50);
 }
 
 window.addEventListener('hashchange', async () => {
