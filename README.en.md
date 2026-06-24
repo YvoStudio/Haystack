@@ -32,8 +32,8 @@ Cross-platform desktop file manager — turn any directory into a searchable, pr
 - **Color tags** — red / orange / yellow / green / blue / purple / gray, filterable
 
 ### LAN sharing (built-in HTTP server)
-- An HTTP server starts with the app, prefers port 80 and falls back to 8080
-- Each root can have its own URL prefix (e.g. `http://192.168.1.10/projects`)
+- An HTTP server starts with the app, listening on port 8765 by default (incrementing to the next free port if busy)
+- Each root can have its own URL prefix (e.g. `http://192.168.1.10:8765/projects`)
 - Routes map URL prefixes to local directories, automatically exposing them to other machines on the network
 - No nginx or other external HTTP server required
 - Safety: only roots with an explicit `urlBase` are exposed; others are local-only

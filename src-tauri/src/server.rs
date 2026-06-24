@@ -53,11 +53,13 @@ pub fn get_local_ip() -> String {
 /// Try ports in order, take the first that binds. Runs forever in a background thread.
 pub fn spawn(cfg: AppConfig, status: Arc<Mutex<HttpStatus>>) {
     thread::spawn(move || {
-        let candidates: [u16; 2] = [80, 8080];
+        // 默认从高位端口起,避开 80/8080 等常用端口;被占用则自增到下一个空闲端口。
+        const PORT_START: u16 = 8765;
+        const PORT_END: u16 = 8784;
         let mut server: Option<Server> = None;
         let mut bound: Option<u16> = None;
         let mut last_err: Option<String> = None;
-        for port in candidates {
+        for port in PORT_START..=PORT_END {
             let addr = format!("0.0.0.0:{port}");
             match Server::http(&addr) {
                 Ok(s) => {

@@ -3070,7 +3070,7 @@ document.addEventListener('mouseup', () => {
       invoke('get_local_ip').catch(() => '127.0.0.1'),
     ]);
     const port = status && status.port;
-    const portSuffix = port && port !== 80 ? ':' + port : '';
+    const portSuffix = port ? ':' + port : '';
     const defaultBase = `http://${localIp}${portSuffix}`;
 
     const list = el('div');
@@ -3143,7 +3143,7 @@ window.__haystackBuildUrl = async function (absPath) {
     const status = await window.__haystack.invoke('get_http_status').catch(() => null);
     const ip = await window.__haystack.invoke('get_local_ip').catch(() => '127.0.0.1');
     const port = status && status.port;
-    const portSuffix = port && port !== 80 ? ':' + port : '';
+    const portSuffix = port ? ':' + port : '';
     const basename = root.path.split(/[\/\\]/).filter(Boolean).pop() || '';
     base = `http://${ip}${portSuffix}` + (basename ? '/' + encodeURIComponent(basename) : '');
   }
