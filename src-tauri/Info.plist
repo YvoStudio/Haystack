@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <!-- 打包后的 macOS 应用从启动起就隐藏 Dock 图标，仅保留菜单栏图标。 -->
+    <key>LSUIElement</key>
+    <true/>
+</dict>
+</plist>

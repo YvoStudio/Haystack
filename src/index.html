@@ -7,6 +7,8 @@
 <link rel="icon" type="image/svg+xml" href="favicon.svg">
 <script src="api.js"></script>
 <script src="updater.js"></script>
+<script src="tabs.js"></script>
+<script src="live-updates.js"></script>
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github.min.css">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/marked/12.0.2/marked.min.js"></script>
@@ -405,6 +407,7 @@
     .file-date { display: none; }
   }
 </style>
+<link rel="stylesheet" href="tabs.css">
 </head>
 <body>
 
@@ -421,7 +424,15 @@
 </div>
 <div class="resize-handle" id="resizeHandle"></div>
 <div class="main">
+  <div class="tabs-bar">
+    <div class="tab-list" id="tabList" role="tablist" aria-label="文件夹标签页"></div>
+    <button class="tab-new" id="btnNewTab" title="新建标签页 (Cmd/Ctrl+T)" aria-label="新建标签页" disabled>+</button>
+  </div>
   <div class="topbar">
+    <div class="nav-history">
+      <button id="btnBack" title="后退 (Alt+←)" aria-label="后退" disabled>‹</button>
+      <button id="btnForward" title="前进 (Alt+→)" aria-label="前进" disabled>›</button>
+    </div>
     <div class="breadcrumb" id="breadcrumb"></div>
     <div class="search-wrap">
       <span style="position:relative;display:inline-flex;align-items:center;">
@@ -440,7 +451,7 @@
       <button class="btn-bookmarks" id="btnBookmarks">&#9733; 书签</button>
     </div>
   </div>
-  <div id="content"><div class="empty-msg">加载中...</div></div>
+  <div id="content" role="tabpanel"><div class="empty-msg">加载中...</div></div>
   <div id="gotoPathOverlay" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.25);z-index:9999;align-items:flex-start;justify-content:center;padding-top:120px;">
     <div style="background:#fff;border-radius:8px;box-shadow:0 8px 32px rgba(0,0,0,0.2);padding:18px;width:560px;max-width:90vw;">
       <div style="font-size:13px;color:#666;margin-bottom:8px;">输入绝对路径或 <code>~/...</code> 跳转,Enter 确认,Esc 取消</div>
@@ -639,7 +650,7 @@ function setColorTag(filePath, color) {
   const tags = getColorTags();
   if (color) tags[filePath] = color; else delete tags[filePath];
   localStorage.setItem(TAG_KEY, JSON.stringify(tags));
-  Object.keys(dirCache).forEach(k => delete dirCache[k]);
+  invalidateDirCache();
 }
 function getColorTag(filePath) {
   return getColorTags()[filePath] || null;
@@ -706,6 +717,11 @@ function showMoreMenu(btn, localPath, relPath, isDir) {
   menu.style.left = Math.min(rect.left, window.innerWidth - 200) + 'px';
 
   const items = [];
+  if (isDir) items.push({
+    icon: SVG.folder,
+    label: '在新标签页中打开',
+    action: () => openTab(relPath),
+  });
 
   const termPath = isDir ? localPath : localPath.substring(0, localPath.lastIndexOf('/'));
   items.push({
@@ -747,7 +763,7 @@ function showMoreMenu(btn, localPath, relPath, isDir) {
         const r2 = await fetch('/www/_move', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ src: localPath, destDir: d.path }) });
         const d2 = await r2.json();
         if (d2.error) { showToast('移动失败: ' + d2.error); return; }
-        Object.keys(dirCache).forEach(k => delete dirCache[k]);
+        invalidateDirCache();
         await renderFiles(pathFromHash());
         showToast('已移动');
       } catch { showToast('移动失败'); }
@@ -910,17 +926,31 @@ function resortTreeSiblings(container) {
 
 // ---- 获取目录数据（带缓存）----
 const dirCache = {};
-function dirCacheKey(navPath) {
-  return navPath + '|' + currentSort + '|' + (getShowHidden() ? 'h' : '');
+let dirCacheGeneration = 0;
+function invalidateDirCache() {
+  ++dirCacheGeneration;
+  Object.keys(dirCache).forEach(key => delete dirCache[key]);
 }
-async function fetchDir(navPath) {
+function dirCacheKey(navPath, sort = currentSort, showHidden = getShowHidden()) {
+  return navPath + '|' + sort + '|' + (showHidden ? 'h' : '');
+}
+async function fetchDir(navPath, sort = currentSort, showHidden = getShowHidden()) {
   const { rootIdx, rel } = parseNavPath(navPath);
-  const cacheKey = dirCacheKey(navPath);
-  const showHidden = getShowHidden();
+  const cacheKey = dirCacheKey(navPath, sort, showHidden);
+  const generation = dirCacheGeneration;
   if (dirCache[cacheKey]) return dirCache[cacheKey];
-  const r = await fetch(`/www/_list_all?dir=${encodeURIComponent(rel)}&root=${rootIdx}`);
-  if (!r.ok) throw new Error(r.status);
-  const items = await r.json();
+  let items;
+  try {
+    const r = await fetch(`/www/_list_all?dir=${encodeURIComponent(rel)}&root=${rootIdx}`);
+    if (!r.ok) throw new Error(r.status);
+    items = await r.json();
+  } catch (error) {
+    if (generation !== dirCacheGeneration) return fetchDir(navPath, sort, showHidden);
+    throw error;
+  }
+  // Tauri invoke cannot be cancelled. Never put a late, invalidated response
+  // back into the cache; keep the initiating tab's sort/hidden preferences.
+  if (generation !== dirCacheGeneration) return fetchDir(navPath, sort, showHidden);
   const filtered = items.filter(i => {
     if (blocked(i.name, rel)) return false;
     if (i.name.startsWith('.')) {
@@ -938,8 +968,8 @@ async function fetchDir(navPath) {
     const aTag = tagOf(a), bTag = tagOf(b);
     if (aTag && !bTag) return -1;
     if (!aTag && bTag) return 1;
-    if (currentSort === 'size') return (b.size || 0) - (a.size || 0);
-    if (currentSort === 'date') return new Date(b.mtime) - new Date(a.mtime);
+    if (sort === 'size') return (b.size || 0) - (a.size || 0);
+    if (sort === 'date') return new Date(b.mtime) - new Date(a.mtime);
     return a.name.localeCompare(b.name, 'zh-CN');
   });
   dirCache[cacheKey] = filtered;
@@ -948,24 +978,40 @@ async function fetchDir(navPath) {
 
 // ---- 左侧树 ----
 let _suppressExpandTree = false;
-async function buildTreeLevel(container, navPath, depth) {
-  // 防重复加载
-  if (container.dataset.loaded) return;
-  container.dataset.loaded = '1';
-
+function buildTreeLevel(container, navPath, depth) {
+  container.dataset.navPath = navPath;
+  container.dataset.depth = depth;
+  if (container._loadPromise) return container._loadPromise;
+  if (container.dataset.loaded && container._generation === dirCacheGeneration) return Promise.resolve();
+  container._loadPromise = populateTreeLevel(container, navPath, depth)
+    .finally(() => { delete container._loadPromise; });
+  return container._loadPromise;
+}
+async function populateTreeLevel(container, navPath, depth) {
   let items;
-  try { items = await fetchDir(navPath); } catch { return; }
+  try { items = await fetchDir(navPath); } catch {
+    delete container.dataset.loaded;
+    container.replaceChildren();
+    return;
+  }
+  container.dataset.loaded = '1';
+  container._generation = dirCacheGeneration;
   const dirs = items.filter(i => i.type === 'directory');
   const { rootIdx, rel } = parseNavPath(navPath);
+  const existing = new Map(Array.from(container.children, node => [node.firstElementChild?.dataset.path, node]));
+  const next = [];
 
   for (const d of dirs) {
     const path = makeNavPath(rootIdx, (rel || '') + d.name + '/');
+    // Reuse existing subtrees so external changes don't collapse the sidebar.
+    if (existing.has(path)) { next.push(existing.get(path)); continue; }
     const node = document.createElement('div');
 
     const row = document.createElement('div');
     row.className = 'tree-item';
     row.style.paddingLeft = (20 + depth * 24) + 'px';
     row.dataset.path = path;
+    row.dataset.navPath = path;
 
     const toggle = document.createElement('span');
     toggle.className = 'tree-toggle';
@@ -993,33 +1039,39 @@ async function buildTreeLevel(container, navPath, depth) {
 
     row.addEventListener('click', async (e) => {
       e.stopPropagation();
-
-      if (!children.dataset.loaded) {
-        await buildTreeLevel(children, path, depth + 1);
-        if (children.children.length === 0) toggle.classList.add('empty');
-      }
+      const version = tabNavigationVersion;
+      await buildTreeLevel(children, path, depth + 1);
+      toggle.classList.toggle('empty', children.children.length === 0);
+      if (version !== tabNavigationVersion || !row.isConnected) return;
       const willOpen = !children.classList.contains('open');
       children.classList.toggle('open', willOpen);
       toggle.classList.toggle('open', willOpen);
 
-      // 告诉 hashchange 不要再跑 expandTreeTo 覆盖我们刚才的折叠/展开
+      // 不要让标签页导航再次 expandTreeTo 覆盖手动折叠/展开
       _suppressExpandTree = true;
       navigate(path);
     });
 
     node.append(row, children);
-    container.appendChild(node);
+    next.push(node);
   }
+  if (next.length !== container.children.length || next.some((node, index) => node !== container.children[index])) {
+    const sidebar = document.querySelector('.sidebar');
+    const scrollTop = sidebar.scrollTop;
+    container.replaceChildren(...next);
+    sidebar.scrollTop = scrollTop;
+  }
+  container.previousElementSibling?.querySelector('.tree-toggle')?.classList.toggle('empty', next.length === 0);
 }
 
-function highlightTree(rel) {
+function highlightTree(rel, scroll = true) {
   let activeEl = null;
   document.querySelectorAll('.tree-item').forEach(el => {
     const isActive = el.dataset.path === rel;
     el.classList.toggle('active', isActive);
     if (isActive) activeEl = el;
   });
-  if (activeEl) {
+  if (activeEl && scroll) {
     activeEl.scrollIntoView({ block: 'center', behavior: 'smooth' });
   }
 }
@@ -1037,11 +1089,13 @@ function renderBreadcrumb(navPath) {
   if (currentColor) {
     html += `<span class="bc-color-dot" title="当前目录颜色标签" style="width:12px;height:12px;border-radius:50%;background:${currentColor};display:inline-block;margin-right:8px;flex-shrink:0;"></span>`;
   }
-  html += `<a href="#/${makeNavPath(rootIdx, '')}">${rootName}</a>`;
+  const escapeHtml = text => String(text).replace(/[&<>"']/g, ch => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[ch]);
+  const hashFor = path => path.split('/').map(encodeURIComponent).join('/');
+  html += `<a href="#/${hashFor(makeNavPath(rootIdx, ''))}">${escapeHtml(rootName)}</a>`;
   let acc = '';
   for (const p of parts) {
     acc += p + '/';
-    html += `<span>/</span><a href="#/${makeNavPath(rootIdx, acc)}">${p}</a>`;
+    html += `<span>/</span><a href="#/${hashFor(makeNavPath(rootIdx, acc))}">${escapeHtml(p)}</a>`;
   }
   const starred = isBookmarked(navPath);
   const starSvg = starred
@@ -1251,7 +1305,7 @@ async function createFile(navPath, template) {
         });
         const d = await r.json();
         if (d.error) { showToast('创建失败: ' + d.error); return; }
-        Object.keys(dirCache).forEach(k => { if (k.startsWith(navPath + '|')) delete dirCache[k]; });
+        invalidateDirCache();
         await renderFiles(navPath);
         showToast('文件夹已创建');
       } catch { showToast('创建失败'); }
@@ -1268,7 +1322,7 @@ async function createFile(navPath, template) {
         });
         const d = await r.json();
         if (d.error) { showToast('创建失败: ' + d.error); return; }
-        Object.keys(dirCache).forEach(k => { if (k.startsWith(navPath + '|')) delete dirCache[k]; });
+        invalidateDirCache();
         await renderFiles(navPath);
         showToast('文件已创建');
       } catch { showToast('创建失败'); }
@@ -1280,7 +1334,7 @@ async function createFile(navPath, template) {
 }
 
 function showCreateEditor(navPath, template) {
-  const { rel } = parseNavPath(navPath);
+  const { rootIdx, rel } = parseNavPath(navPath);
   const old = document.getElementById('preview-modal');
   if (old) old.remove();
 
@@ -1334,7 +1388,7 @@ function showCreateEditor(navPath, template) {
     btnSave.disabled = true;
     btnSave.textContent = '创建中...';
     try {
-      const r = await fetch('/www/_create?root=' + currentRootIdx, {
+      const r = await fetch('/www/_create?root=' + rootIdx, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ dir: rel || '', name, content: textarea.value }),
@@ -1342,7 +1396,7 @@ function showCreateEditor(navPath, template) {
       const d = await r.json();
       if (d.error) { showToast('创建失败: ' + d.error); btnSave.disabled = false; btnSave.textContent = '创建'; return; }
       overlay.remove();
-      Object.keys(dirCache).forEach(k => { if (k.startsWith(navPath + '|')) delete dirCache[k]; });
+      invalidateDirCache();
       await renderFiles(navPath);
       showToast('文件已创建');
     } catch { showToast('创建失败'); btnSave.disabled = false; btnSave.textContent = '创建'; }
@@ -1366,42 +1420,72 @@ function showCreateEditor(navPath, template) {
 let currentViewMode = localStorage.getItem('hxjs_viewMode') || 'list';
 let currentSort = localStorage.getItem('hxjs_sort') || 'name';
 
-async function renderFiles(navPath) {
+let fileRenderVersion = 0;
+async function renderFiles(navPath, { silent = false } = {}) {
+  // File operations may finish after their originating tab has been left.
+  if (navPath !== pathFromHash()) return false;
+  captureActiveTab();
+  const version = ++fileRenderVersion;
+  const tabId = tabSession.activeId;
+  const viewMode = currentViewMode;
+  const generation = dirCacheGeneration;
+  const isCurrent = () => version === fileRenderVersion && tabId === tabSession.activeId && navPath === pathFromHash();
   const el = document.getElementById('content');
-  el.innerHTML = '<div class="empty-msg">加载中...</div>';
-  renderBreadcrumb(navPath);
-  highlightTree(navPath);
+  if (!silent) {
+    displayedTabId = null;
+    el.innerHTML = '<div class="empty-msg">加载中...</div>';
+    renderBreadcrumb(navPath);
+  }
   const { rel } = parseNavPath(navPath);
   document.title = rel ? `Haystack / ${navPath}` : 'Haystack';
-  if (typeof buildViewSortMenu === 'function') buildViewSortMenu();
+  if (!silent) buildViewSortMenu();
 
-  let items;
-  try { items = await fetchDir(navPath); } catch (e) {
-    el.innerHTML = `<div class="empty-msg">加载失败 (${e.message})</div>`; return;
+  try {
+    const items = await fetchDir(navPath);
+    if (!isCurrent()) return false;
+    // Build off-DOM: even per-file async path resolution must not append stale rows.
+    const fragment = document.createDocumentFragment();
+    if (viewMode === 'list' || viewMode === 'thumb-sm') {
+      await renderListView(fragment, items, navPath, viewMode, isCurrent);
+    } else {
+      await renderThumbView(fragment, items, navPath, true, isCurrent);
+    }
+    if (!isCurrent()) return false;
+    if (!items.length) {
+      const empty = document.createElement('div');
+      empty.className = 'empty-msg';
+      empty.textContent = '空目录';
+      fragment.appendChild(empty);
+    }
+    if (generation !== dirCacheGeneration) return renderFiles(navPath, { silent });
+    if (silent && window.HaystackLiveUpdates.isPaused()) return false;
+    if (silent) {
+      captureActiveTab(); // Preserve scrolling/selection made while the read was pending.
+      renderBreadcrumb(navPath);
+    }
+    el.replaceChildren(fragment);
+    el._directorySignature = JSON.stringify(items);
+    const dirCount = items.filter(i => i.type === 'directory').length;
+    const fileCount = items.length - dirCount;
+    const statsEl = document.getElementById('bcStats');
+    if (statsEl) statsEl.textContent = [dirCount && dirCount + ' 个文件夹', fileCount && fileCount + ' 个文件'].filter(Boolean).join(' · ');
+  } catch (e) {
+    if (!isCurrent()) return false;
+    if (generation !== dirCacheGeneration) return renderFiles(navPath, { silent });
+    if (silent && window.HaystackLiveUpdates.isPaused()) return false;
+    if (silent) captureActiveTab();
+    const error = document.createElement('div');
+    error.className = 'empty-msg';
+    error.textContent = '加载失败 (' + e.message + ')';
+    el.replaceChildren(error);
+    el._directorySignature = null;
   }
-  if (items.length === 0) { el.innerHTML = '<div class="empty-msg">空目录</div>'; return; }
-
-  el.innerHTML = '';
-
-  // 更新面包屑里的统计
-  const dirCount = items.filter(i => i.type === 'directory').length;
-  const fileCount = items.length - dirCount;
-  const statsEl = document.getElementById('bcStats');
-  if (statsEl) {
-    const p = [];
-    if (dirCount > 0) p.push(dirCount + ' 个文件夹');
-    if (fileCount > 0) p.push(fileCount + ' 个文件');
-    statsEl.textContent = p.join(' · ');
-  }
-
-  if (currentViewMode === 'list' || currentViewMode === 'thumb-sm') {
-    await renderListView(el, items, navPath);
-  } else {
-    await renderThumbView(el, items, navPath, true);
-  }
+  restoreActiveTabView();
+  persistTabs();
+  return true;
 }
 
-async function renderListView(el, items, navPath) {
+async function renderListView(el, items, navPath, viewMode, isCurrent) {
   const { rootIdx, rel } = parseNavPath(navPath);
   const listEl = document.createElement('div');
   listEl.className = 'file-list';
@@ -1411,7 +1495,8 @@ async function renderListView(el, items, navPath) {
     const ph = parent ? parent + '/' : '';
     const up = document.createElement('a');
     up.className = 'file-item';
-    up.href = `#/${makeNavPath(rootIdx, ph)}`;
+    up.href = '#/' + makeNavPath(rootIdx, ph).split('/').map(encodeURIComponent).join('/');
+    up.dataset.name = '..';
     up.innerHTML = `<div class="file-icon">${SVG.back}</div><div class="file-name clickable">..</div>
       <div class="file-meta file-size"></div><div class="file-meta file-date"></div>`;
     listEl.appendChild(up);
@@ -1424,6 +1509,7 @@ async function renderListView(el, items, navPath) {
     const filePath = `${BASE}${itemNavPath}`;
     const fullUrl = location.origin + filePath;
     const localPath = await __haystackAbs(itemNavPath);
+    if (!isCurrent()) return;
     const icon = isDir ? SVG.folder : fileIcon(item.name);
     const size = isDir ? '' : fmtSize(item.size || 0);
     const date = fmtDate(item.mtime);
@@ -1431,7 +1517,10 @@ async function renderListView(el, items, navPath) {
 
     const row = document.createElement('div');
     row.className = 'file-item';
-    const isThumbSm = currentViewMode === 'thumb-sm';
+    row.dataset.name = item.name;
+    row.dataset.type = item.type;
+    if (isDir) row.dataset.navPath = itemNavPathDir;
+    const isThumbSm = viewMode === 'thumb-sm';
     const ext2 = item.name.split('.').pop().toLowerCase();
     const isImage2 = !isDir && IMAGE_EXTS.has(ext2);
 
@@ -1439,7 +1528,11 @@ async function renderListView(el, items, navPath) {
     if (isThumbSm) {
       iconEl.className = 'file-icon file-icon-thumb';
       if (isImage2) {
-        iconEl.innerHTML = `<img src="${filePath}" loading="lazy" style="width:100%;height:100%;object-fit:cover;border-radius:4px;">`;
+        const img = document.createElement('img');
+        img.src = window.__haystackAssetUrl(itemNavPath, item.revision || item.mtime) || filePath;
+        img.loading = 'lazy';
+        img.style.cssText = 'width:100%;height:100%;object-fit:cover;border-radius:4px;';
+        iconEl.appendChild(img);
       } else {
         iconEl.className = 'file-icon file-icon-thumb';
         iconEl.innerHTML = `<div style="display:flex;align-items:center;justify-content:center;width:100%;height:100%;">${icon}</div>`;
@@ -1465,7 +1558,7 @@ async function renderListView(el, items, navPath) {
     if (isDir) {
       nameEl.classList.add('clickable');
       row.style.cursor = 'pointer';
-      row.addEventListener('click', () => { location.hash = `#/${itemNavPathDir}`; });
+      row.addEventListener('click', () => navigate(itemNavPathDir));
     } else {
       nameEl.classList.add('clickable');
       row.style.cursor = 'pointer';
@@ -1498,14 +1591,14 @@ async function renderListView(el, items, navPath) {
   el.appendChild(listEl);
 }
 
-async function renderThumbView(el, items, navPath, isLarge) {
+async function renderThumbView(el, items, navPath, isLarge, isCurrent) {
   const { rootIdx, rel } = parseNavPath(navPath);
   // 上级目录
   if (rel) {
     const parent = rel.split('/').filter(Boolean).slice(0, -1).join('/');
     const ph = parent ? parent + '/' : '';
     const backLink = document.createElement('a');
-    backLink.href = `#/${makeNavPath(rootIdx, ph)}`;
+    backLink.href = '#/' + makeNavPath(rootIdx, ph).split('/').map(encodeURIComponent).join('/');
     backLink.style.cssText = 'display:flex;align-items:center;gap:6px;padding:10px 0;color:#555;text-decoration:none;font-size:14px;width:100%;white-space:nowrap;';
     backLink.innerHTML = `<span style="flex-shrink:0;display:flex;align-items:center;">${SVG.back}</span> 返回上级`;
     el.appendChild(backLink);
@@ -1529,13 +1622,14 @@ async function renderThumbView(el, items, navPath, isLarge) {
     card.title = item.name;
     card.dataset.name = item.name;
     card.dataset.type = item.type;
+    if (isDir) card.dataset.navPath = itemNavPathDir;
 
     const imgWrap = document.createElement('div');
     imgWrap.className = 'thumb-img-wrap';
 
     if (isImage) {
       const img = document.createElement('img');
-      img.src = filePath;
+      img.src = window.__haystackAssetUrl(itemNavPath, item.revision || item.mtime) || filePath;
       img.loading = 'lazy';
       imgWrap.appendChild(img);
       if (item.size) {
@@ -1568,6 +1662,7 @@ async function renderThumbView(el, items, navPath, isLarge) {
 
     if (isLarge) {
       const localPath = await __haystackAbs(itemNavPath);
+      if (!isCurrent()) return;
       const fullUrl = location.origin + filePath;
       const popup = document.createElement('div');
       popup.className = 'thumb-actions-popup';
@@ -1621,7 +1716,7 @@ async function renderThumbView(el, items, navPath, isLarge) {
     }
 
     if (isDir) {
-      card.addEventListener('click', () => { location.hash = `#/${itemNavPathDir}`; });
+      card.addEventListener('click', () => navigate(itemNavPathDir));
     } else {
       card.addEventListener('click', () => { previewFile(filePath, item.name); });
     }
@@ -2289,6 +2384,7 @@ function toggleBookmark(path, type) {
 function renderBookmarkItem(body, bm) {
   const item = document.createElement('div');
   item.className = 'bm-item';
+  if (bm.type !== 'file') item.dataset.navPath = bm.path;
 
   const icon = document.createElement('span');
   icon.className = 'bm-icon';
@@ -2319,7 +2415,7 @@ function renderBookmarkItem(body, bm) {
     if (bm.type === 'file') {
       window.open(BASE + bm.path, '_blank');
     } else {
-      location.hash = '#/' + bm.path;
+      navigate(bm.path);
     }
   });
   body.appendChild(item);
@@ -2491,24 +2587,28 @@ document.getElementById('drawerClose').addEventListener('click', closeDrawer);
 
 // ---- 搜索 ----
 let searchTimer = null;
-let pendingHighlight = null; // 搜索跳转后要高亮的文件名
 const searchInput = document.getElementById('searchInput');
 const searchResults = document.getElementById('searchResults');
 
 const searchClear = document.getElementById('searchClear');
 
 searchInput.addEventListener('input', () => {
-  clearTimeout(searchTimer);
+  cancelSearch();
   const q = searchInput.value.trim();
   searchClear.style.display = q ? 'block' : 'none';
-  if (!q) { searchResults.innerHTML = ''; return; }
-  searchTimer = setTimeout(() => doSearch(q), 300);
+  saveTabs();
+  if (q) searchTimer = setTimeout(() => doSearch(q), 300);
+});
+searchInput.addEventListener('focus', () => {
+  const q = searchInput.value.trim();
+  if (q) doSearch(q);
 });
 
 searchClear.addEventListener('click', () => {
+  cancelSearch();
   searchInput.value = '';
-  searchResults.innerHTML = '';
   searchClear.style.display = 'none';
+  saveTabs();
   searchInput.focus();
 });
 
@@ -2517,10 +2617,11 @@ let searchSelectedIdx = -1;
 searchInput.addEventListener('keydown', (e) => {
   const items = searchResults.querySelectorAll('.sr-item');
   if (e.key === 'Escape') {
+    cancelSearch();
     searchInput.value = '';
-    searchResults.innerHTML = '';
+    searchClear.style.display = 'none';
+    saveTabs();
     searchInput.blur();
-    searchSelectedIdx = -1;
     return;
   }
   if (e.key === 'ArrowDown') {
@@ -2558,18 +2659,26 @@ searchInput.addEventListener('keydown', (e) => {
 // 点击外部关闭搜索结果
 document.addEventListener('click', (e) => {
   if (!searchInput.contains(e.target) && !searchResults.contains(e.target)) {
-    searchResults.innerHTML = '';
+    cancelSearch();
   }
 });
 
 let searchAbort = null;
+function cancelSearch() {
+  clearTimeout(searchTimer);
+  if (searchAbort) searchAbort.abort();
+  searchAbort = null;
+  searchSelectedIdx = -1;
+  searchResults.innerHTML = '';
+}
 
 async function doSearch(q) {
-  if (searchAbort) searchAbort.abort();
+  cancelSearch();
   searchAbort = new AbortController();
   const signal = searchAbort.signal;
-  searchSelectedIdx = -1;
+  const tabId = tabSession.activeId;
   const navPath = pathFromHash();
+  const isCurrent = () => !signal.aborted && tabId === tabSession.activeId && navPath === pathFromHash();
   const { rootIdx, rel } = parseNavPath(navPath);
   // 搜索范围限制在当前打开的目录(含其子目录),避免从根递归整棵树导致卡顿
   searchResults.innerHTML = '<div class="sr-loading">搜索中...</div>';
@@ -2577,6 +2686,7 @@ async function doSearch(q) {
     const r = await fetch(`/www/_search?q=${encodeURIComponent(q)}&dir=${encodeURIComponent(rel)}&root=${rootIdx}`, { signal });
     if (!r.ok) throw new Error(r.status);
     const items = await r.json();
+    if (!isCurrent()) return;
     if (items.length === 0) {
       searchResults.innerHTML = '<div class="sr-empty">未找到匹配文件</div>';
       return;
@@ -2606,11 +2716,12 @@ async function doSearch(q) {
       info.append(nameEl, pathEl);
       row.append(icon, info);
 
+      if (item.type === 'directory') row.dataset.navPath = makeNavPath(rootIdx, item.path);
       row.addEventListener('click', () => {
-        searchResults.innerHTML = '';
+        cancelSearch();
         searchInput.value = '';
-        if (searchClear) searchClear.style.display = 'none';
-        const searchRoot = currentRootIdx;
+        searchClear.style.display = 'none';
+        const searchRoot = rootIdx;
         // 跳转到文件/目录所在位置并高亮定位(不打开预览)
         let dir;
         if (item.type === 'directory') {
@@ -2627,16 +2738,18 @@ async function doSearch(q) {
           // 已在目标目录(忽略尾斜杠差异):直接滚动并高亮
           highlightFileItem(item.name);
         } else {
-          pendingHighlight = item.name;
-          location.hash = '#/' + targetNav;
+          navigate(targetNav, { highlight: item.name });
         }
       });
 
       searchResults.appendChild(row);
     }
   } catch (e) {
-    if (e.name === 'AbortError') return;
-    searchResults.innerHTML = `<div class="sr-empty">搜索失败 (${e.message})</div>`;
+    if (e.name === 'AbortError' || !isCurrent()) return;
+    const error = document.createElement('div');
+    error.className = 'sr-empty';
+    error.textContent = '搜索失败 (' + e.message + ')';
+    searchResults.replaceChildren(error);
   }
 }
 
@@ -2654,15 +2767,11 @@ function makeNavPath(rootIdx, rel) {
   return rootIdx + '/' + (rel || '');
 }
 
-// ---- 导航 ----
-function pathFromHash() {
-  return decodeURIComponent(location.hash.replace(/^#\/?/, ''));
-}
-function navigate(rel) {
-  location.hash = '#/' + rel;
-}
-
+// ---- 导航树（标签页导航入口见 tab-ui.js） ----
+let treeExpansionVersion = 0;
 async function expandTreeTo(navPath) {
+  const version = ++treeExpansionVersion;
+  const isCurrent = () => version === treeExpansionVersion;
   const { rootIdx, rel } = parseNavPath(navPath);
   const parts = rel.split('/').filter(Boolean);
 
@@ -2673,18 +2782,20 @@ async function expandTreeTo(navPath) {
 
   // 先展开根节点
   const rootNav = makeNavPath(rootIdx, '');
-  await expandOneLevel(rootNav, 1);
+  await expandOneLevel(rootNav, 1, isCurrent);
 
   // 逐层展开子目录
   let accumulatedRel = '';
   for (const part of parts) {
+    if (!isCurrent()) return;
     accumulatedRel += part + '/';
     // depth 语义是"待构建子级的深度":展开第 k 层目录,其子级在第 k+1 层。
-    await expandOneLevel(makeNavPath(rootIdx, accumulatedRel), accumulatedRel.split('/').filter(Boolean).length + 1);
+    await expandOneLevel(makeNavPath(rootIdx, accumulatedRel), accumulatedRel.split('/').filter(Boolean).length + 1, isCurrent);
   }
 }
 
-async function expandOneLevel(levelNav, depth) {
+async function expandOneLevel(levelNav, depth, isCurrent) {
+  if (!isCurrent()) return;
   let row = document.querySelector(`.tree-item[data-path="${CSS.escape(levelNav)}"]`);
   if (!row) {
     // 父级节点还没加载，先 build 上一层
@@ -2693,13 +2804,14 @@ async function expandOneLevel(levelNav, depth) {
       const parentRow = document.querySelector(`.tree-item[data-path="${CSS.escape(parentNav)}"]`);
       if (parentRow) {
         const parentChildren = parentRow.nextElementSibling;
-        if (parentChildren && parentChildren.children.length === 0) {
+        if (parentChildren) {
           await buildTreeLevel(parentChildren, parentNav, depth - 1);
         }
       }
     }
     row = document.querySelector(`.tree-item[data-path="${CSS.escape(levelNav)}"]`);
   }
+  if (!isCurrent()) return;
   if (row) {
     const children = row.nextElementSibling;
     if (children && children.classList.contains('tree-children')) {
@@ -2708,11 +2820,9 @@ async function expandOneLevel(levelNav, depth) {
         const toggle = row.querySelector('.tree-toggle');
         if (toggle) toggle.classList.add('open');
       }
-      if (children.children.length === 0) {
-        await buildTreeLevel(children, levelNav, depth);
-        const toggle = row.querySelector('.tree-toggle');
-        if (children.children.length === 0 && toggle) toggle.classList.add('empty');
-      }
+      await buildTreeLevel(children, levelNav, depth);
+      const toggle = row.querySelector('.tree-toggle');
+      if (toggle) toggle.classList.toggle('empty', children.children.length === 0);
     }
   }
 }
@@ -2735,6 +2845,7 @@ async function rebuildTree() {
     const row = document.createElement('div');
     row.className = 'tree-item tree-root-item';
     row.dataset.path = navPath;
+    row.dataset.navPath = navPath;
     row.style.paddingLeft = '20px';
 
     const toggle = document.createElement('span');
@@ -2757,10 +2868,10 @@ async function rebuildTree() {
 
     row.addEventListener('click', async (e) => {
       e.stopPropagation();
-      if (!children.dataset.loaded) {
-        await buildTreeLevel(children, navPath, 1);
-        if (children.children.length === 0) toggle.classList.add('empty');
-      }
+      const version = tabNavigationVersion;
+      await buildTreeLevel(children, navPath, 1);
+      toggle.classList.toggle('empty', children.children.length === 0);
+      if (version !== tabNavigationVersion || !row.isConnected) return;
       const willOpen = !children.classList.contains('open');
       children.classList.toggle('open', willOpen);
       toggle.classList.toggle('open', willOpen);
@@ -2775,7 +2886,7 @@ async function rebuildTree() {
 
 document.getElementById('btnHome').addEventListener('click', () => {
   collapseAllTree();
-  location.hash = '#/0/';
+  navigate(makeNavPath(currentRootIdx, ''));
 });
 
 const btnToggleHidden = document.getElementById('btnToggleHidden');
@@ -2787,20 +2898,20 @@ syncHiddenBtn();
 btnToggleHidden.addEventListener('click', async () => {
   setShowHidden(!getShowHidden());
   syncHiddenBtn();
-  Object.keys(dirCache).forEach(k => delete dirCache[k]);
+  invalidateDirCache();
   const tree = document.getElementById('tree');
   tree.innerHTML = '';
   delete tree.dataset.loaded;
-  const navPath = pathFromHash();
   await rebuildTree();
-  const { rootIdx, rel } = parseNavPath(navPath);
+  const navPath = pathFromHash();
   await renderFiles(navPath);
+  if (navPath !== pathFromHash()) return;
   await expandTreeTo(navPath);
-  highlightTree(navPath);
+  if (navPath === pathFromHash()) highlightTree(navPath);
 });
 
-function highlightFileItem(name, attempt = 0) {
-  if (!name) return;
+function highlightFileItem(name, attempt = 0, version = tabNavigationVersion) {
+  if (!name || version !== tabNavigationVersion) return;
   const items = document.querySelectorAll('#content .file-item, #content .thumb-card');
   for (const item of items) {
     const itemName = item.classList.contains('thumb-card')
@@ -2814,26 +2925,8 @@ function highlightFileItem(name, attempt = 0) {
     }
   }
   // 列表可能还在异步渲染(切目录后),短暂重试以确保能定位并高亮
-  if (attempt < 20) setTimeout(() => highlightFileItem(name, attempt + 1), 50);
+  if (attempt < 20) setTimeout(() => highlightFileItem(name, attempt + 1, version), 50);
 }
-
-window.addEventListener('hashchange', async () => {
-  const navPath = pathFromHash();
-  const { rootIdx } = parseNavPath(navPath);
-  currentRootIdx = rootIdx;
-  await renderFiles(navPath);
-  if (_suppressExpandTree) {
-    _suppressExpandTree = false;
-  } else {
-    await expandTreeTo(navPath);
-  }
-  highlightTree(navPath);
-  if (pendingHighlight) {
-    // renderFiles 已 await 渲染完成,此时列表 DOM 一定存在
-    highlightFileItem(pendingHighlight);
-    pendingHighlight = null;
-  }
-});
 
 // ---- 文件列表键盘导航 ----
 let fileSelectedIdx = -1;
@@ -2845,7 +2938,7 @@ function getFileItems() {
   return document.querySelectorAll('#content .thumb-card');
 }
 
-function updateFileSelection(items, idx) {
+function updateFileSelection(items, idx, scroll = true) {
   items.forEach((el, i) => {
     if (el.classList.contains('thumb-card')) {
       el.style.boxShadow = i === idx ? '0 0 0 2px #6d28d9' : '';
@@ -2854,10 +2947,12 @@ function updateFileSelection(items, idx) {
       el.classList.toggle('highlight', i === idx);
     }
   });
-  if (items[idx]) items[idx].scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+  if (scroll && items[idx]) items[idx].scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+  if (scroll) saveTabs();
 }
 
 document.addEventListener('keydown', (e) => {
+  if (e.defaultPrevented || e.metaKey || e.ctrlKey || e.altKey) return;
   const tag = document.activeElement?.tagName;
   if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
   if (document.getElementById('preview-modal')) return;
@@ -2871,7 +2966,7 @@ document.addEventListener('keydown', (e) => {
       if (rel) {
         const parts = rel.split('/').filter(Boolean);
         const parent = parts.slice(0, -1).join('/');
-        location.hash = '#/' + (parent ? makeNavPath(rootIdx, parent + '/') : makeNavPath(rootIdx, ''));
+        navigate(parent ? makeNavPath(rootIdx, parent + '/') : makeNavPath(rootIdx, ''));
       }
     }
     return;
@@ -2910,7 +3005,7 @@ document.addEventListener('keydown', (e) => {
     // 列表：".." 返回行
     const nameEl = row.querySelector('.file-name');
     if (nameEl && nameEl.textContent === '..') {
-      row.click ? row.click() : location.hash = row.getAttribute('href');
+      row.click();
       return;
     }
     // 目录
@@ -2924,9 +3019,6 @@ document.addEventListener('keydown', (e) => {
     return;
   }
 });
-
-// hashchange 时重置选中
-window.addEventListener('hashchange', () => { fileSelectedIdx = -1; });
 
 // ---- 侧栏拖拽调整宽度 ----
 const resizeHandle = document.getElementById('resizeHandle');
@@ -2959,19 +3051,7 @@ document.addEventListener('mouseup', () => {
   localStorage.setItem('haystack_sidebarWidth', parseInt(sidebar.style.width));
 });
 
-// 初始化
-(async () => {
-  try {
-    await rebuildTree();
-    const navPath = pathFromHash();
-    await renderFiles(navPath);
-    if (navPath) await expandTreeTo(navPath);
-    highlightTree(navPath);
-  } catch (e) {
-    console.error('[init]', e);
-    document.getElementById('content').innerHTML = `<div class="empty-msg">初始化失败: ${e.message}<br><span style="font-size:12px;color:#999;">${e.stack}</span></div>`;
-  }
-})();
+// 初始化由 tab-ui.js 在加载保存的标签页会话后执行。
 
 // ============================================================
 // 设置面板:多根目录 + 域名映射
@@ -3058,16 +3138,22 @@ document.addEventListener('mouseup', () => {
       #settings-modal .st-btn-danger { color: #c00; border-color: #fbb; }
       #settings-modal .st-btn-danger:hover { background: #fff5f5; }
       #settings-modal .st-tip { font-size: 12px; color: #888; margin-top: 4px; }
+      #settings-modal .st-update { display: flex; align-items: center; justify-content: space-between; gap: 16px; border-top: 1px solid #eee; margin-top: 20px; padding-top: 16px; }
+      #settings-modal .st-update .st-section-title { margin-bottom: 2px; }
+      #settings-modal .st-btn:disabled { opacity: 0.6; cursor: wait; }
+      #settings-modal .st-update-status { min-height: 18px; overflow-wrap: anywhere; }
+      #settings-modal .st-update-status.error { color: #c33; }
     `;
     document.head.appendChild(s);
   }
 
   async function open() {
     injectStyle();
-    const [cfg, status, localIp] = await Promise.all([
+    const [cfg, status, localIp, version] = await Promise.all([
       invoke('get_config'),
       invoke('get_http_status').catch(() => ({ running: false })),
       invoke('get_local_ip').catch(() => '127.0.0.1'),
+      invoke('plugin:app|version').catch(() => null),
     ]);
     const port = status && status.port;
     const portSuffix = port ? ':' + port : '';
@@ -3086,6 +3172,8 @@ document.addEventListener('mouseup', () => {
         ? `本机静态服务运行中 · 端口 ${port} · 局域网 IP ${localIp}`
         : `本机静态服务未启动${status && status.error ? ' · ' + status.error : ''}`,
     );
+    const updateStatus = el('div', { id: 'settingsUpdateStatus', class: 'st-tip st-update-status', role: 'status', 'aria-live': 'polite' });
+    const checkUpdateBtn = el('button', { id: 'btnCheckUpdate', type: 'button', class: 'st-btn', onclick: checkUpdate }, '检查更新');
     const cancelBtn = el('button', { type: 'button', class: 'st-btn', onclick: close }, '取消');
     const saveBtn = el('button', { type: 'button', class: 'st-btn st-btn-primary', onclick: save }, '保存并刷新');
 
@@ -3098,11 +3186,42 @@ document.addEventListener('mouseup', () => {
           addBtn,
           el('div', { class: 'st-tip' }, '每个根目录可单独配 URL 前缀,默认使用本机局域网 IP。"复制地址"按钮会按此前缀拼链接。'),
           httpInfo,
+          el('div', { class: 'st-update' },
+            el('div', {},
+              el('p', { class: 'st-section-title' }, '软件更新'),
+              el('div', { class: 'st-tip' }, version ? `当前版本 v${version}` : '检查线上最新版本'),
+              el('div', { class: 'st-tip' }, '更新完成后将重启应用，请先保存设置。'),
+            ),
+            checkUpdateBtn,
+          ),
+          updateStatus,
         ),
         el('div', { class: 'st-foot' }, cancelBtn, saveBtn),
       ),
     );
     document.body.appendChild(modal);
+
+    async function checkUpdate() {
+      if (checkUpdateBtn.disabled) return;
+      checkUpdateBtn.disabled = true;
+      checkUpdateBtn.textContent = '检查中…';
+      updateStatus.classList.remove('error');
+      updateStatus.textContent = '正在连接更新服务器…';
+      try {
+        if (!window.HaystackUpdater) throw new Error('当前环境不支持在线更新');
+        const result = await window.HaystackUpdater.check({ silent: false });
+        if (result.status === 'error') throw new Error(result.message);
+        updateStatus.textContent = result.status === 'available'
+          ? `发现新版本 v${result.version}，` + (result.canInstall ? '可在更新弹窗中下载安装。' : '请使用正式安装版在线升级。')
+          : '当前已是最新版本';
+      } catch (error) {
+        updateStatus.classList.add('error');
+        updateStatus.textContent = '检查更新失败：' + (error?.message || String(error)) + '，请稍后重试。';
+      } finally {
+        checkUpdateBtn.disabled = false;
+        checkUpdateBtn.textContent = '检查更新';
+      }
+    }
 
     async function save() {
       const roots = Array.from(list.children).map(r => r._read()).filter(r => r.path);
@@ -3204,8 +3323,9 @@ window.__haystackCopyUrl = async function (absPath) {
   }
 
   async function submit() {
+    const version = tabNavigationVersion;
     const r = await resolve(input.value);
-    if (!r) return;
+    if (!r || version !== tabNavigationVersion) return;
     if (r.error) { err.textContent = r.error; return; }
     let rel = r.rel;
     const rootIdx = r.rootIdx;
@@ -3221,12 +3341,14 @@ window.__haystackCopyUrl = async function (absPath) {
         const lastSlash = rel.lastIndexOf('/');
         const parent = lastSlash >= 0 ? rel.slice(0, lastSlash + 1) : '';
         const filename = lastSlash >= 0 ? rel.slice(lastSlash + 1) : rel;
-        location.hash = '#/' + makeNavPath(rootIdx, parent);
+        if (version !== tabNavigationVersion) return;
         close();
-        // 等待目录加载,再触发预览
-        setTimeout(() => {
-          try { previewFile(BASE + makeNavPath(rootIdx, parent) + filename, filename); } catch (e) { console.error(e); }
-        }, 200);
+        const target = makeNavPath(rootIdx, parent);
+        const tabId = tabSession.activeId;
+        await navigate(target);
+        if (tabSession.activeId === tabId && pathFromHash() === target) {
+          previewFile(BASE + target + filename, filename);
+        }
         return;
       }
     } else if (rel === '') {
@@ -3234,7 +3356,8 @@ window.__haystackCopyUrl = async function (absPath) {
     } else {
       // 已带 /,直接当目录
     }
-    location.hash = '#/' + makeNavPath(rootIdx, rel);
+    if (version !== tabNavigationVersion) return;
+    navigate(makeNavPath(rootIdx, rel));
     close();
   }
 
@@ -3253,5 +3376,6 @@ window.__haystackCopyUrl = async function (absPath) {
   });
 })();
 </script>
+<script src="tab-ui.js"></script>
 </body>
 </html>

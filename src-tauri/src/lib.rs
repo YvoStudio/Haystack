@@ -1,5 +1,8 @@
+#[cfg(target_os = "macos")]
+mod app_menu;
 mod commands;
 mod config;
+mod directory_watch;
 mod protocol;
 mod server;
 
@@ -51,11 +54,18 @@ pub fn run() {
         // server.rs 的 HTTP 服务仍保留给"复制网络地址"(LAN/外部分享)。
         .register_uri_scheme_protocol(protocol::SCHEME, protocol::handle)
         .setup(|app| {
+            // macOS 作为菜单栏应用运行：保留顶部状态栏图标，不在 Dock 中显示。
+            #[cfg(target_os = "macos")]
+            app.set_activation_policy(tauri::ActivationPolicy::Accessory);
+            #[cfg(target_os = "macos")]
+            app_menu::install(app.handle())?;
+
             let store = config::ConfigStore::load(app.handle())?;
             let http_state = server::HttpState::new();
             server::spawn(store.snapshot(), http_state.status.clone());
             app.manage(http_state);
             app.manage(store);
+            app.manage(directory_watch::DirectoryWatch::new(app.handle().clone()));
 
             // 系统托盘(macOS 菜单栏图标)
             let show_item = MenuItem::with_id(app, "tray_show", "显示窗口", true, None::<&str>)?;
@@ -137,7 +147,9 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            commands::can_install_updates,
             commands::list_dir,
+            directory_watch::watch_directories,
             commands::search,
             commands::create_file,
             commands::move_path,

@@ -9,6 +9,29 @@ use walkdir::WalkDir;
 
 use crate::config::ConfigStore;
 
+/// The macOS updater replaces the enclosing app directory. Never let a dev
+/// binary (or an unpackaged release binary) treat target/debug as an app bundle.
+#[tauri::command]
+pub fn can_install_updates() -> bool {
+    if cfg!(debug_assertions) {
+        return false;
+    }
+    #[cfg(target_os = "macos")]
+    {
+        let Ok(executable) = std::env::current_exe() else { return false };
+        let Some(macos) = executable.parent() else { return false };
+        let Some(contents) = macos.parent() else { return false };
+        let Some(bundle) = contents.parent() else { return false };
+        macos.file_name().is_some_and(|name| name == "MacOS")
+            && contents.file_name().is_some_and(|name| name == "Contents")
+            && bundle.extension().is_some_and(|ext| ext == "app")
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        true
+    }
+}
+
 #[derive(Debug, Serialize)]
 pub struct DirEntry {
     pub name: String,
@@ -16,6 +39,8 @@ pub struct DirEntry {
     pub kind: &'static str,
     pub size: u64,
     pub mtime: String,
+    /// High-resolution revision for change detection and thumbnail cache keys.
+    pub revision: String,
 }
 
 #[derive(Debug, Serialize)]
@@ -53,12 +78,18 @@ pub fn list_dir(store: State<'_, ConfigStore>, path: String) -> Result<Vec<DirEn
     for entry in read.flatten() {
         let Ok(meta) = entry.metadata() else { continue };
         let kind = if meta.is_dir() { "directory" } else { "file" };
-        let mtime = meta.modified().map(fmt_mtime).unwrap_or_default();
+        let modified = meta.modified().ok();
+        let mtime = modified.map(fmt_mtime).unwrap_or_default();
+        let revision = modified
+            .and_then(|time| time.duration_since(UNIX_EPOCH).ok())
+            .map(|duration| duration.as_nanos().to_string())
+            .unwrap_or_default();
         out.push(DirEntry {
             name: entry.file_name().to_string_lossy().into_owned(),
             kind,
             size: meta.len(),
             mtime,
+            revision,
         });
     }
     Ok(out)

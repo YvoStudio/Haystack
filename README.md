@@ -10,7 +10,9 @@
 
 ### 文件浏览
 - **多根目录** — 一台机器可挂载任意数量的根(macOS/Windows/Linux 通用),侧栏树导航
+- **多标签页** — 同时浏览多个文件夹,每个标签独立保留目录、前进/后退记录、视图、排序、搜索词、选中项和滚动位置;刷新或重启自动恢复
 - **三种视图** — 列表 / 小缩略图 / 大缩略图,可按名称/大小/日期排序
+- **目录自动更新** — 系统中新增、删除、重命名或修改文件后自动同步列表、缩略图和侧栏,保留标签、选中项、滚动位置及树展开状态;窗口重新显示时补查,定时检查兜底,无需整页刷新
 - **强大的预览**
   - 图片(画廊式翻页 + 缩放,Ctrl+滚轮 / 双击 / `+ −` 按钮 / `Cmd+0` 复位)
   - 视频 / 音频(原生 webview 播放)
@@ -21,6 +23,16 @@
   - Office / 压缩包等二进制(显示元信息卡)
 - **搜索** — 单根内递归搜索,支持 `.png` 这种按后缀搜
 - **键盘** — 方向键、Enter、Backspace、Esc
+
+### 标签页操作
+- 顶部 `+` 在新标签中打开当前目录;点标签切换,点 `×` 或中键关闭(至少保留一个标签)
+- 文件夹右键或“···”菜单 → **在新标签页中打开**;列表、缩略图、侧栏、面包屑、目录书签和目录搜索结果均支持
+- `Cmd/Ctrl+单击` 或中键点击目录:后台打开;同时按 `Shift` 则切换到新标签
+- `Cmd/Ctrl+T`:新建;`Cmd/Ctrl+W`:关闭;`Cmd/Ctrl+Shift+T`:恢复最近关闭的标签
+- `Ctrl+Tab` / `Ctrl+Shift+Tab`:切换下一个/上一个;`Cmd/Ctrl+1…8`:指定标签;`Cmd/Ctrl+9`:最后一个
+- `Alt+←/→` 或工具栏箭头:当前标签后退/前进
+- 文件仍使用现有预览弹窗,“打开”仍调用系统默认应用;窗口关闭按钮仍隐藏窗口
+- 会话保存在本机 WebView 的 localStorage (`haystack_tabs_v1`);调整根目录顺序时按实际路径恢复,移除根目录会跳过其标签
 
 ### 文件操作
 - **打开** — 任意文件类型一键调系统默认应用(Excel、Preview、Photoshop...)
@@ -40,8 +52,10 @@
 
 ### 设置面板(齿轮按钮)
 - 增删根目录、配 URL 前缀
+- **检查更新** — 显示当前版本,手动检查线上最新版本;确认后下载、校验签名、安装并重启,支持失败重试。Debug/未打包的 macOS 应用仅可检查,不可直接覆盖开发目录
 - 新建根目录时 URL 自动用本机局域网 IP + 当前服务端口预填
 - "复制地址"按钮按文件所属根的 URL 前缀拼链接,支持中文/特殊字符
+- 更新前请先保存设置;检查更新本身不会保存或丢弃尚未提交的设置
 
 ### 桌面体验
 - **菜单栏托盘图标**(macOS) — 左键单击显示窗口、右键显示菜单(显示 / 设置 / 退出)
@@ -94,10 +108,27 @@ sudo apt install -y libwebkit2gtk-4.1-dev libappindicator3-dev \
 
 **Windows 额外要求**:Visual Studio 2022 + "Desktop development with C++" 工作负载、WebView2 SDK(随 Tauri 自动拉取)。
 
+### 测试
+
+```bash
+npm test                             # 标签页状态/会话单元测试
+npx playwright install chromium      # 首次安装浏览器
+npm run test:browser                  # 浏览器交互回归(模拟 Tauri invoke)
+cargo check --manifest-path src-tauri/Cargo.toml
+cargo test --manifest-path src-tauri/Cargo.toml directory_watch  # 监听范围与真实文件变更测试
+```
+
+浏览器回归不替代 macOS/Windows/Linux 原生壳的菜单、快捷键与窗口行为验收。
+
 ## 技术栈
 
-- **前端** — 单文件 `src/index.html`,无打包步骤,原生 ES6 + DOM API
+- **前端** — `src/index.html`,无打包步骤,原生 ES6 + DOM API
+  - `tabs.js` — 独立标签页状态、历史与会话恢复
+  - `tab-ui.js` / `tabs.css` — 标签栏、导航、快捷键和状态切换
+  - `live-updates.js` — 变化事件合并、静默差异刷新、焦点补查和轮询兜底
 - **后端** — Rust(`src-tauri/src/`):
+  - `app_menu.rs` — macOS 标签页菜单及原生快捷键桥接
+  - `directory_watch.rs` — 当前浏览目录及其祖先的非递归系统监听,不扫描整个根目录树
   - `commands.rs` — 列目录、搜索、文件操作、终端集成
   - `config.rs` — 多根目录配置持久化(`app_config_dir/config.json`)
   - `server.rs` — 内置 `tiny_http` 静态文件服务,按 urlBase 自动挂载路由

@@ -10,7 +10,9 @@ Cross-platform desktop file manager — turn any directory into a searchable, pr
 
 ### Browsing
 - **Multiple roots** — mount any number of root directories on one machine (works on macOS / Windows / Linux), with sidebar tree navigation
+- **Folder tabs** — browse several folders at once, each with independent navigation history, view, sort, search query, selection and scroll position; sessions restore after reload or restart
 - **Three views** — list / small thumbnails / large thumbnails, sortable by name / size / date
+- **Live directory updates** — external file creation, deletion, renaming and edits automatically update lists, thumbnails and sidebar without reloading; tab state, selection, scroll and expanded branches are preserved, with focus refresh and periodic checks as fallbacks
 - **Rich preview**
   - Images (gallery navigation + zoom: Ctrl+wheel / double-click / `+ −` buttons / `Cmd+0` to reset)
   - Video / audio (native webview playback)
@@ -21,6 +23,16 @@ Cross-platform desktop file manager — turn any directory into a searchable, pr
   - Office / archives and other binaries (info card with metadata)
 - **Search** — recursive filename search within a root, supports extension search like `.png`
 - **Keyboard** — arrow keys, Enter, Backspace, Esc
+
+### Using tabs
+- Click `+` to open the current folder in a new tab; click a tab to switch, or its `×` / middle-click to close (one tab always remains)
+- Right-click a folder or use its “···” menu to **open in a new tab**; supported in lists, thumbnails, sidebar, breadcrumbs, folder bookmarks and folder search results
+- `Cmd/Ctrl+click` or middle-click a folder to open in the background; add `Shift` to activate the new tab
+- `Cmd/Ctrl+T`: new tab; `Cmd/Ctrl+W`: close; `Cmd/Ctrl+Shift+T`: reopen the last closed tab
+- `Ctrl+Tab` / `Ctrl+Shift+Tab`: next / previous; `Cmd/Ctrl+1…8`: select a tab; `Cmd/Ctrl+9`: last tab
+- `Alt+Left/Right` or the toolbar arrows: back / forward in the current tab
+- File previews and system-default Open remain unchanged; the window close button still hides the window
+- Sessions use local WebView storage (`haystack_tabs_v1`); roots are matched by their actual paths when reordered, and tabs belonging to removed roots are skipped
 
 ### Operations
 - **Open** — open any file with the system default app (Excel, Preview, Photoshop, ...)
@@ -40,8 +52,10 @@ Cross-platform desktop file manager — turn any directory into a searchable, pr
 
 ### Settings panel (gear button)
 - Add / remove roots, configure URL prefixes
+- **Check for updates** — shows the current version and checks the latest online release; after confirmation, downloads, verifies the signature, installs and restarts, with failure/retry feedback. Debug builds and unpackaged macOS binaries can check but cannot overwrite development directories
 - New roots get the local LAN IP + current server port pre-filled as the URL base
 - "Copy URL" button builds links using the URL prefix of the file's owning root, with proper handling of Chinese and special characters
+- Save settings before installing an update; checking alone does not save or discard draft settings
 
 ### Desktop niceties
 - **Menu-bar tray icon** (macOS) — left-click to show window, right-click for the menu (Show / Reload / Settings / Quit)
@@ -94,10 +108,27 @@ sudo apt install -y libwebkit2gtk-4.1-dev libappindicator3-dev \
 
 **Windows requirements**: Visual Studio 2022 with the "Desktop development with C++" workload. WebView2 SDK is fetched automatically by Tauri.
 
+### Tests
+
+```bash
+npm test                             # tab state / session unit tests
+npx playwright install chromium      # first-time browser installation
+npm run test:browser                  # browser regression tests (mock Tauri invoke)
+cargo check --manifest-path src-tauri/Cargo.toml
+cargo test --manifest-path src-tauri/Cargo.toml directory_watch  # scope and real filesystem event tests
+```
+
+Browser tests do not replace native macOS/Windows/Linux verification of menus, shortcuts and window behavior.
+
 ## Architecture
 
-- **Frontend** — single file `src/index.html`, no bundling step, plain ES6 + DOM
+- **Frontend** — `src/index.html`, no bundling step, plain ES6 + DOM
+  - `tabs.js` — independent tab state, history and session restoration
+  - `tab-ui.js` / `tabs.css` — tab bar, navigation, shortcuts and state switching
+  - `live-updates.js` — debounced events, silent diff refresh, focus refresh and polling fallback
 - **Backend** — Rust (`src-tauri/src/`):
+  - `app_menu.rs` — macOS tab menu and native shortcut bridge
+  - `directory_watch.rs` — non-recursive native watches for browsed folders and their ancestors, without scanning entire root trees
   - `commands.rs` — directory listing, search, file ops, terminal integration
   - `config.rs` — multi-root configuration persistence (`app_config_dir/config.json`)
   - `server.rs` — built-in `tiny_http` static file server, mounts routes per `urlBase`

@@ -10,6 +10,8 @@ src-tauri/gen/
 # Build outputs
 dist/
 build/
+playwright-report/
+test-results/
 
 # OS
 .DS_Store

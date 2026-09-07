@@ -5,31 +5,53 @@
   if (!TAURI || !TAURI.core) return;
   const { invoke, Channel } = TAURI.core;
   const DISMISS_KEY = 'haystack-updater:dismissed-version';
+  let pendingCheck = null;
+  let activeDialog = null;
 
   // 公开 API
   window.HaystackUpdater = {
     check: (opts = {}) => checkForUpdates({ silent: opts.silent !== false }),
   };
 
-  async function checkForUpdates({ silent }) {
-    let result;
-    try {
-      result = await invoke('plugin:updater|check');
-    } catch (err) {
-      if (!silent) alert('检查更新失败: ' + (err && err.message ? err.message : String(err)));
-      return;
+  // Manual checks return a status for the settings panel. Share an in-flight
+  // startup/manual check, but never let a skipped version hide a manual result.
+  function checkForUpdates({ silent }) {
+    if (activeDialog) return Promise.resolve({ ...activeDialog });
+    if (pendingCheck) {
+      if (!silent) pendingCheck.manual = true;
+      return pendingCheck.promise;
     }
-    if (!result || result.available === false) {
-      if (!silent) alert('当前已是最新版本');
-      return;
-    }
-    if (silent && localStorage.getItem(DISMISS_KEY) === result.version) return;
-    showDialog(result);
+    const request = { manual: !silent };
+    pendingCheck = request;
+    request.promise = (async () => {
+      try {
+        const canInstall = await invoke('can_install_updates');
+        const result = await invoke('plugin:updater|check', { timeout: 15000 });
+        if (!result || result.available === false) return { status: 'up-to-date' };
+        let dismissed;
+        try { dismissed = localStorage.getItem(DISMISS_KEY); } catch { /* Storage unavailable. */ }
+        if (!request.manual && dismissed === result.version) {
+          releaseUpdate(result.rid);
+          return { status: 'skipped', version: result.version };
+        }
+        showDialog({ ...result, canInstall: canInstall === true });
+        return { ...activeDialog };
+      } catch (error) {
+        return { status: 'error', message: error?.message || String(error) };
+      } finally {
+        pendingCheck = null;
+      }
+    })();
+    return request.promise;
+  }
+
+  function releaseUpdate(rid) {
+    if (rid != null) invoke('plugin:resources|close', { rid }).catch(console.warn);
   }
 
   function showDialog(info) {
     const css = `
-      .hsu-overlay { position: fixed; inset: 0; z-index: 9999; background: rgba(0,0,0,0.5); display: flex; align-items: center; justify-content: center; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+      .hsu-overlay { position: fixed; inset: 0; z-index: 10001; background: rgba(0,0,0,0.5); display: flex; align-items: center; justify-content: center; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
       .hsu-dialog { width: 480px; max-width: 90vw; background: #fff; color: #1a1a1a; border-radius: 10px; box-shadow: 0 20px 60px rgba(0,0,0,0.4); padding: 20px 22px; font-size: 13px; }
       @media (prefers-color-scheme: dark) { .hsu-dialog { background: #2b2b2b; color: #eee; } .hsu-notes { background: #1e1e1e; border-color: #444; } .hsu-progress-bar { background: #1e1e1e; } .hsu-btn-secondary { color: #eee; border-color: #555; } .hsu-btn-secondary:hover:not(:disabled) { background: #3a3a3a; } }
       .hsu-dialog h3 { margin: 0 0 4px; font-size: 16px; font-weight: 600; }
@@ -55,8 +77,8 @@
     const overlay = document.createElement('div');
     overlay.className = 'hsu-overlay';
     overlay.innerHTML = `
-      <div class="hsu-dialog">
-        <h3>发现新版本 v${escapeHtml(info.version)}</h3>
+      <div class="hsu-dialog" role="dialog" aria-modal="true" aria-labelledby="hsu-title">
+        <h3 id="hsu-title">发现新版本 v${escapeHtml(info.version)}</h3>
         <div class="hsu-current">当前版本 v${escapeHtml(info.currentVersion || '')}</div>
         <div class="hsu-notes">${formatNotes(info.body)}</div>
         <div class="hsu-progress">
@@ -69,9 +91,19 @@
           <button class="hsu-btn-primary" data-act="install">立即更新并重启</button>
         </div>
       </div>`;
+    const previousFocus = document.activeElement;
     document.body.appendChild(overlay);
-
-    const close = () => { overlay.remove(); style.remove(); };
+    activeDialog = { status: 'available', version: info.version, canInstall: info.canInstall };
+    let installing = false;
+    let installed = false;
+    const close = () => {
+      if (installing) return;
+      overlay.remove();
+      style.remove();
+      activeDialog = null;
+      releaseUpdate(info.rid);
+      if (previousFocus?.isConnected) previousFocus.focus({ preventScroll: true });
+    };
     const $ = (sel) => overlay.querySelector(sel);
     const skipBtn = $('[data-act="skip"]');
     const laterBtn = $('[data-act="later"]');
@@ -80,15 +112,46 @@
     const fillEl = $('.hsu-progress-fill');
     const textEl = $('.hsu-progress-text');
 
-    skipBtn.onclick = () => { localStorage.setItem(DISMISS_KEY, info.version); close(); };
+    skipBtn.onclick = () => {
+      try { localStorage.setItem(DISMISS_KEY, info.version); } catch { /* Storage unavailable. */ }
+      close();
+    };
     laterBtn.onclick = close;
-    installBtn.onclick = () => {
+    if (!info.canInstall) {
+      installBtn.disabled = true;
+      installBtn.textContent = '当前环境不可安装';
+      progressEl.classList.add('visible');
+      textEl.textContent = '开发版或未打包的应用仅支持检查更新，请使用正式安装版在线升级。';
+    }
+    laterBtn.focus({ preventScroll: true });
+    overlay.addEventListener('keydown', event => {
+      if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); close(); }
+    });
+    installBtn.onclick = async () => {
+      if (installing || !info.canInstall) return;
+      installing = true;
       skipBtn.disabled = laterBtn.disabled = installBtn.disabled = true;
       progressEl.classList.add('visible');
-      runInstall({ fillEl, textEl, rid: info.rid }).then(close).catch((err) => {
-        textEl.textContent = '更新失败: ' + (err && err.message ? err.message : String(err));
-        skipBtn.disabled = laterBtn.disabled = installBtn.disabled = false;
-      });
+      try {
+        window.saveTabs?.();
+        if (!installed) {
+          fillEl.style.width = '0%';
+          textEl.textContent = '准备下载…';
+          await runInstall({ fillEl, textEl, rid: info.rid });
+          installed = true;
+        }
+        textEl.textContent = '安装完成，即将重启…';
+        await invoke('plugin:process|restart');
+        installing = false;
+        close();
+      } catch (error) {
+        textEl.textContent = (installed ? '更新已安装，重启失败: ' : '更新失败: ') + (error?.message || String(error));
+        installing = false;
+        skipBtn.disabled = installed;
+        laterBtn.disabled = installBtn.disabled = false;
+        installBtn.textContent = installed ? '重试重启' : '重试更新';
+        laterBtn.textContent = installed ? '稍后重启' : '稍后提醒';
+      }
     };
   }
 
@@ -115,8 +178,6 @@
       }
     };
     await invoke('plugin:updater|download_and_install', { rid, onEvent: channel });
-    textEl.textContent = '安装完成，即将重启...';
-    await invoke('plugin:process|restart');
   }
 
   function escapeHtml(s) {

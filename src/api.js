@@ -111,6 +111,11 @@
     const abs = isAbs(actualRel) ? actualRel : joinAbs(rootPath, actualRel);
     return convertFileSrc(abs, 'haystack-asset');
   }
+  // Versioned thumbnail URLs let same-name image edits bypass webview caches.
+  window.__haystackAssetUrl = (navPath, revision) => {
+    const url = relToAssetUrl(navPath);
+    return url && url + '?v=' + encodeURIComponent(revision || '');
+  };
   function rewriteSrcAttr(el) {
     if (!el || !el.getAttribute) return;
     const s = el.getAttribute('src');
