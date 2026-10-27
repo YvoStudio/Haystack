@@ -302,6 +302,11 @@
   .file-meta { font-size: 13px; color: #999; margin-left: 31px; flex-shrink: 0; }
   .file-size { width: 80px; text-align: right; }
   .file-date { width: 140px; text-align: right; }
+  @media (max-width: 1200px) {
+    .file-item .file-actions { margin-left: 16px; gap: 8px; }
+    .file-item:hover .file-meta,
+    .file-item.highlight .file-meta { display: none; }
+  }
   .file-icon-thumb { width: 48px; height: 48px; margin-right: 14px; border-radius: 4px; overflow: hidden; background: #f5f5f5; }
   .file-icon-thumb svg { width: 28px; height: 28px; }
 
@@ -722,6 +727,11 @@ function showMoreMenu(btn, localPath, relPath, isDir) {
     label: '在新标签页中打开',
     action: () => openTab(relPath),
   });
+  else items.push({
+    icon: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none"><path d="M18 13v6a2 2 0 01-2 2H5a2 2 0 01-2-2V8a2 2 0 012-2h6M15 3h6v6M10 14L21 3" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>',
+    label: '打开',
+    action: () => window.open(BASE + relPath, '_blank'),
+  });
 
   const termPath = isDir ? localPath : localPath.substring(0, localPath.lastIndexOf('/'));
   items.push({
@@ -735,7 +745,7 @@ function showMoreMenu(btn, localPath, relPath, isDir) {
     }
   });
 
-  items.push({
+  if (isDir) items.push({
     icon: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none"><path d="M22 19a2 2 0 01-2 2H4a2 2 0 01-2-2V5a2 2 0 012-2h5l2 2h9a2 2 0 012 2z" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>',
     label: '在 Finder 中显示',
     action: () => {
@@ -744,11 +754,21 @@ function showMoreMenu(btn, localPath, relPath, isDir) {
     }
   });
 
-  items.push({
+  if (isDir) items.push({
     icon: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none"><rect x="9" y="9" width="13" height="13" rx="2" stroke="currentColor" stroke-width="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1" stroke="currentColor" stroke-width="2"/></svg>',
     label: '复制本地路径',
     action: () => {
       copyText(localPath).then(() => showToast('路径已复制'));
+    }
+  });
+
+  if (!isDir) items.push({
+    icon: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none"><path d="M10 13a5 5 0 007.54.54l3-3a5 5 0 00-7.07-7.07l-1.72 1.71" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><path d="M14 11a5 5 0 00-7.54-.54l-3 3a5 5 0 007.07 7.07l1.71-1.71" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>',
+    label: '复制地址',
+    action: async () => {
+      const url = window.__haystackBuildUrl ? await window.__haystackBuildUrl(localPath) : null;
+      await copyText(url || location.origin + BASE + relPath);
+      showToast('地址已复制');
     }
   });
 
@@ -1507,7 +1527,6 @@ async function renderListView(el, items, navPath, viewMode, isCurrent) {
     const itemNavPath = makeNavPath(rootIdx, (rel || '') + item.name);
     const itemNavPathDir = makeNavPath(rootIdx, (rel || '') + item.name + '/');
     const filePath = `${BASE}${itemNavPath}`;
-    const fullUrl = location.origin + filePath;
     const localPath = await __haystackAbs(itemNavPath);
     if (!isCurrent()) return;
     const icon = isDir ? SVG.folder : fileIcon(item.name);
@@ -1572,7 +1591,7 @@ async function renderListView(el, items, navPath, viewMode, isCurrent) {
     if (isDir) {
       nameWrap.appendChild(buildDirActions(localPath, itemNavPathDir));
     } else {
-      nameWrap.appendChild(buildActions(filePath, fullUrl, localPath, item.name));
+      nameWrap.appendChild(buildActions(filePath, localPath));
     }
 
     row.append(iconEl, nameWrap);
@@ -1663,13 +1682,12 @@ async function renderThumbView(el, items, navPath, isLarge, isCurrent) {
     if (isLarge) {
       const localPath = await __haystackAbs(itemNavPath);
       if (!isCurrent()) return;
-      const fullUrl = location.origin + filePath;
       const popup = document.createElement('div');
       popup.className = 'thumb-actions-popup';
       if (isDir) {
         popup.appendChild(buildDirActions(localPath, itemNavPathDir));
       } else {
-        popup.appendChild(buildActions(filePath, fullUrl, localPath, item.name));
+        popup.appendChild(buildActions(filePath, localPath));
       }
       // capture phase：btnMore 会 stopPropagation，所以必须在它之前拦到
       popup.addEventListener('click', (e) => {
@@ -1764,36 +1782,36 @@ function buildDirActions(localPath, relPath) {
   return actions;
 }
 
-function buildActions(filePath, fullUrl, localPath, name) {
+function buildActions(filePath, localPath) {
   const actions = document.createElement('div');
   actions.className = 'file-actions';
 
-  const ext = name.split('.').pop().toLowerCase();
   const relFilePath = filePath.replace(BASE, '');
-  const isBinOrOffice = BINARY_EXTS.has(ext) || OFFICE_EXTS.has(ext);
 
-  // 新标签打开按钮
-  const btnOpen = document.createElement('button');
-  btnOpen.className = 'act-btn';
-  btnOpen.innerHTML = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none"><path d="M18 13v6a2 2 0 01-2 2H5a2 2 0 01-2-2V8a2 2 0 012-2h6M15 3h6v6M10 14L21 3" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>打开';
-  btnOpen.addEventListener('click', (e) => { e.stopPropagation(); window.open(filePath, '_blank'); });
-
-  // 复制地址
-  const btnCopy = document.createElement('button');
-  btnCopy.className = 'act-btn';
-  btnCopy.innerHTML = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none"><path d="M10 13a5 5 0 007.54.54l3-3a5 5 0 00-7.07-7.07l-1.72 1.71" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><path d="M14 11a5 5 0 00-7.54-.54l-3 3a5 5 0 007.07 7.07l1.71-1.71" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>复制地址';
-  btnCopy.addEventListener('click', async (e) => {
+  // 在 Finder 中显示
+  const btnFinder = document.createElement('button');
+  btnFinder.className = 'act-btn';
+  btnFinder.innerHTML = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none"><path d="M22 19a2 2 0 01-2 2H4a2 2 0 01-2-2V5a2 2 0 012-2h5l2 2h9a2 2 0 012 2z" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>在 Finder 中显示';
+  btnFinder.addEventListener('click', (e) => {
     e.stopPropagation();
-    let urlToCopy = window.__haystackBuildUrl ? await window.__haystackBuildUrl(localPath) : null;
-    if (!urlToCopy) urlToCopy = fullUrl;
-    await copyText(urlToCopy);
-    btnCopy.innerHTML = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none"><path d="M20 6L9 17l-5-5" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/></svg>已复制';
-    btnCopy.classList.add('copied');
-    setTimeout(() => { btnCopy.innerHTML = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none"><path d="M10 13a5 5 0 007.54.54l3-3a5 5 0 00-7.07-7.07l-1.72 1.71" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><path d="M14 11a5 5 0 00-7.54-.54l-3 3a5 5 0 007.07 7.07l1.71-1.71" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>复制地址'; btnCopy.classList.remove('copied'); }, 1500);
+    fetch('/www/_finder', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ path: localPath }) })
+      .then(r => r.json()).then(d => { if (!d.ok) showToast('打开失败'); }).catch(() => showToast('服务未响应'));
   });
 
-  // 所有文件都加"打开"按钮(桌面版统一走系统默认应用)
-  actions.appendChild(btnOpen);
+  // 复制本地路径
+  const btnCopy = document.createElement('button');
+  btnCopy.className = 'act-btn';
+  const copyLabel = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none"><rect x="9" y="9" width="13" height="13" rx="2" stroke="currentColor" stroke-width="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1" stroke="currentColor" stroke-width="2"/></svg>复制本地路径';
+  btnCopy.innerHTML = copyLabel;
+  btnCopy.addEventListener('click', async (e) => {
+    e.stopPropagation();
+    await copyText(localPath);
+    btnCopy.innerHTML = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none"><path d="M20 6L9 17l-5-5" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/></svg>已复制';
+    btnCopy.classList.add('copied');
+    setTimeout(() => { btnCopy.innerHTML = copyLabel; btnCopy.classList.remove('copied'); }, 1500);
+  });
+
+  actions.appendChild(btnFinder);
   actions.appendChild(createStarBtn(relFilePath, 'file'));
   actions.appendChild(btnCopy);
 

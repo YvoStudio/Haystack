@@ -153,7 +153,8 @@ test('folder bookmarks support new tabs; file Open still uses the system opener'
   await expect(row(page, 'beta.txt')).toBeVisible();
   await page.locator('#btnStar').click();
   await row(page, 'beta.txt').hover();
-  await row(page, 'beta.txt').getByRole('button', { name: '打开', exact: true }).click();
+  await row(page, 'beta.txt').locator('.btn-more').click();
+  await page.locator('.more-menu').getByText('打开', { exact: true }).click();
   await expect.poll(() => page.evaluate(() => fixture.calls.filter(c => c.command === 'plugin:opener|open_path').length)).toBe(1);
   await page.locator('#btnBookmarks').click();
   await page.locator('.bm-item').click({ modifiers: ['ControlOrMeta', 'Shift'] });
