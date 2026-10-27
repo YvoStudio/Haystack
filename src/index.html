@@ -351,12 +351,6 @@
     border: 1px solid #eee; z-index: 200; padding: 6px 0; display: none;
   }
   .more-menu.open { display: block; }
-  /* 衔接触发按钮与菜单之间的 4px 空隙，鼠标可连续移入菜单。 */
-  .more-menu.anchored::before {
-    content: ''; position: absolute; left: -1px; right: -1px;
-    top: -5px; height: 5px;
-  }
-  .more-menu.anchored.opens-up::before { top: auto; bottom: -5px; }
   .more-menu-item {
     display: flex; align-items: center; gap: 8px; padding: 7px 14px;
     font-size: 13px; color: #333; cursor: pointer; transition: background 0.1s;
@@ -709,26 +703,35 @@ function closeMoreMenu() {
 document.addEventListener('click', closeMoreMenu);
 
 function bindMoreMenuDismissal(menu, trigger) {
+  let enteredMenu = !trigger;
   const close = () => {
     if (activeMoreMenu === menu) closeMoreMenu();
   };
-  menu.addEventListener('mouseenter', cancelThumbClose);
+  menu.addEventListener('mouseenter', () => {
+    enteredMenu = true;
+    cancelThumbClose();
+  });
   menu.addEventListener('mouseleave', close);
-  if (trigger) {
-    menu.classList.add('anchored');
-    const leaveTrigger = (e) => {
-      if (!e.relatedTarget || !menu.contains(e.relatedTarget)) close();
-    };
-    trigger.addEventListener('mouseleave', leaveTrigger);
-    menu._dismissCleanup = () => trigger.removeEventListener('mouseleave', leaveTrigger);
-  } else {
-    // 右键菜单可能在鼠标下方生成，首次移动就离开时也要关闭。
-    const moveOutside = (e) => {
-      if (!menu.contains(e.target)) close();
-    };
-    document.addEventListener('mousemove', moveOutside);
-    menu._dismissCleanup = () => document.removeEventListener('mousemove', moveOutside);
-  }
+  const moveOutside = (e) => {
+    if (menu.contains(e.target)) return;
+    if (trigger && !enteredMenu) {
+      if (trigger.contains(e.target)) return;
+      // 首次移入前允许经过按钮与菜单之间的连接区域，包含斜向移动。
+      const b = trigger.getBoundingClientRect(), m = menu.getBoundingClientRect();
+      if (e.clientX >= Math.min(b.left, m.left) && e.clientX <= Math.max(b.right, m.right) &&
+          e.clientY >= Math.min(b.top, m.bottom) && e.clientY <= Math.max(b.bottom, m.top)) {
+        cancelThumbClose();
+        return;
+      }
+    }
+    close();
+  };
+  document.addEventListener('mousemove', moveOutside);
+  document.addEventListener('mouseleave', close);
+  menu._dismissCleanup = () => {
+    document.removeEventListener('mousemove', moveOutside);
+    document.removeEventListener('mouseleave', close);
+  };
 }
 
 function showMoreMenu(btn, localPath, relPath, isDir) {
