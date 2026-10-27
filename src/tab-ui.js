@@ -232,6 +232,7 @@ document.addEventListener('contextmenu', e => {
   menu.appendChild(item);
   activeMoreMenu = menu;
   document.body.appendChild(menu);
+  bindMoreMenuDismissal(menu);
 });
 
 document.getElementById('btnNewTab').addEventListener('click', () => openTab());

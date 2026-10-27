@@ -351,6 +351,12 @@
     border: 1px solid #eee; z-index: 200; padding: 6px 0; display: none;
   }
   .more-menu.open { display: block; }
+  /* 衔接触发按钮与菜单之间的 4px 空隙，鼠标可连续移入菜单。 */
+  .more-menu.anchored::before {
+    content: ''; position: absolute; left: -1px; right: -1px;
+    top: -5px; height: 5px;
+  }
+  .more-menu.anchored.opens-up::before { top: auto; bottom: -5px; }
   .more-menu-item {
     display: flex; align-items: center; gap: 8px; padding: 7px 14px;
     font-size: 13px; color: #333; cursor: pointer; transition: background 0.1s;
@@ -689,6 +695,7 @@ function cancelThumbClose() {
 function _removeActiveMoreMenuDom() {
   clearTimeout(_thumbCloseTimer);
   if (activeMoreMenu) {
+    activeMoreMenu._dismissCleanup?.();
     activeMoreMenu.remove();
     activeMoreMenu = null;
     document.querySelectorAll('.file-item.highlight').forEach(el => el.classList.remove('highlight'));
@@ -700,6 +707,29 @@ function closeMoreMenu() {
   document.querySelectorAll('.thumb-card.sticky').forEach(el => el.classList.remove('sticky'));
 }
 document.addEventListener('click', closeMoreMenu);
+
+function bindMoreMenuDismissal(menu, trigger) {
+  const close = () => {
+    if (activeMoreMenu === menu) closeMoreMenu();
+  };
+  menu.addEventListener('mouseenter', cancelThumbClose);
+  menu.addEventListener('mouseleave', close);
+  if (trigger) {
+    menu.classList.add('anchored');
+    const leaveTrigger = (e) => {
+      if (!e.relatedTarget || !menu.contains(e.relatedTarget)) close();
+    };
+    trigger.addEventListener('mouseleave', leaveTrigger);
+    menu._dismissCleanup = () => trigger.removeEventListener('mouseleave', leaveTrigger);
+  } else {
+    // 右键菜单可能在鼠标下方生成，首次移动就离开时也要关闭。
+    const moveOutside = (e) => {
+      if (!menu.contains(e.target)) close();
+    };
+    document.addEventListener('mousemove', moveOutside);
+    menu._dismissCleanup = () => document.removeEventListener('mousemove', moveOutside);
+  }
+}
 
 function showMoreMenu(btn, localPath, relPath, isDir) {
   _removeActiveMoreMenuDom();
@@ -716,6 +746,7 @@ function showMoreMenu(btn, localPath, relPath, isDir) {
   if (rect.bottom + menuHeight > window.innerHeight) {
     menu.style.bottom = (window.innerHeight - rect.top + 4) + 'px';
     menu.style.top = 'auto';
+    menu.classList.add('opens-up');
   } else {
     menu.style.top = (rect.bottom + 4) + 'px';
   }
@@ -856,6 +887,7 @@ function showMoreMenu(btn, localPath, relPath, isDir) {
   menu.appendChild(colorRow);
 
   document.body.appendChild(menu);
+  bindMoreMenuDismissal(menu, btn);
   setTimeout(() => menu.addEventListener('click', (e) => e.stopPropagation()), 0);
 
   // 目录若为 git/svn 仓库,异步检测后把"更新"二级菜单插到菜单顶部
@@ -896,16 +928,6 @@ function showMoreMenu(btn, localPath, relPath, isDir) {
       parent.addEventListener('click', (e) => e.stopPropagation());
       menu.insertBefore(parent, menu.firstChild);
     }).catch(() => {});
-  }
-
-  // 鼠标离开菜单后自动关闭（仅对文件行有效；面包屑等脱离行的场景下依赖点击外部关闭）
-  if (fileRow) {
-    menu.addEventListener('mouseleave', () => {
-      menu._closeTimer = setTimeout(closeMoreMenu, 400);
-    });
-    menu.addEventListener('mouseenter', () => {
-      clearTimeout(menu._closeTimer);
-    });
   }
 }
 
@@ -1693,12 +1715,6 @@ async function renderThumbView(el, items, navPath, isLarge, isCurrent) {
       popup.addEventListener('click', (e) => {
         if (e.target.closest('.btn-more')) {
           card.classList.add('sticky');
-          setTimeout(() => {
-            if (activeMoreMenu) {
-              activeMoreMenu.addEventListener('mouseenter', cancelThumbClose);
-              activeMoreMenu.addEventListener('mouseleave', scheduleThumbClose);
-            }
-          }, 0);
         }
       }, true);
       // bubble phase：阻止点击 popup 背景时冒泡到 card 触发 navigate/preview
