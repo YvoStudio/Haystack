@@ -1,13 +1,13 @@
 const { test, expect, row, activeTab } = require('./app-fixture.cjs');
 
 test('new, switch, independent history, close, reopen and last-tab protection', async ({ page }) => {
-  await row(page, 'Alpha').click();
+  await row(page, 'Alpha').locator('.file-name').click();
   await expect(activeTab(page)).toHaveText('Alpha');
   await expect(row(page, 'Child')).toBeVisible();
   await page.getByRole('button', { name: '新建标签页', exact: true }).click();
   await expect(page.getByRole('tab')).toHaveCount(2);
   await expect(page.getByRole('button', { name: '后退', exact: true })).toBeDisabled();
-  await row(page, 'Child').click();
+  await row(page, 'Child').locator('.file-name').click();
   await expect(row(page, 'child.txt')).toBeVisible();
   await page.getByRole('tab', { name: 'Alpha', exact: true }).click();
   await expect(row(page, 'Child')).toBeVisible();
@@ -29,13 +29,13 @@ test('new, switch, independent history, close, reopen and last-tab protection', 
 });
 
 test('folders open via modifier click, middle click, context menu, more menu and sidebar', async ({ page }) => {
-  await row(page, 'Alpha').click({ modifiers: ['Meta'] });
+  await row(page, 'Alpha').locator('.file-name').click({ modifiers: ['Meta'] });
   await expect(page.getByRole('tab')).toHaveCount(2);
   await expect(activeTab(page)).toHaveText('Home');
-  await row(page, 'Beta').click({ button: 'middle' });
+  await row(page, 'Beta').locator('.file-name').click({ button: 'middle' });
   await expect(page.getByRole('tab')).toHaveCount(3);
   await expect(activeTab(page)).toHaveText('Home');
-  await row(page, 'Empty').click({ button: 'right' });
+  await row(page, 'Empty').locator('.file-name').click({ button: 'right' });
   await page.getByText('在新标签页中打开', { exact: true }).click();
   await expect(activeTab(page)).toHaveText('Empty');
   await expect(page.getByText('空目录', { exact: true })).toBeVisible();
@@ -48,7 +48,7 @@ test('folders open via modifier click, middle click, context menu, more menu and
 });
 
 test('view, sort, selection, scroll and search are isolated and restored on reload', async ({ page }) => {
-  await row(page, 'Alpha').click();
+  await row(page, 'Alpha').locator('.file-name').click();
   await expect(row(page, 'a49.txt')).toBeAttached();
   await page.evaluate(() => {
     fileSelectedIdx = 20;
@@ -79,9 +79,9 @@ test('view, sort, selection, scroll and search are isolated and restored on relo
 });
 
 test('slow directory and per-file path results cannot overwrite another tab', async ({ page }) => {
-  await row(page, 'Beta').click({ modifiers: ['ControlOrMeta'] });
+  await row(page, 'Beta').locator('.file-name').click({ modifiers: ['ControlOrMeta'] });
   await page.evaluate(() => { fixture.delays['/home/Slow'] = 400; });
-  await row(page, 'Slow').click();
+  await row(page, 'Slow').locator('.file-name').click();
   await page.getByRole('tab', { name: 'Beta', exact: true }).click();
   await expect(row(page, 'beta.txt')).toBeVisible();
   await page.waitForTimeout(600);
@@ -102,7 +102,7 @@ test('slow directory and per-file path results cannot overwrite another tab', as
 });
 
 test('non-cancellable search results do not leak across tabs or reappear after clearing', async ({ page }) => {
-  await row(page, 'Beta').click({ modifiers: ['ControlOrMeta'] });
+  await row(page, 'Beta').locator('.file-name').click({ modifiers: ['ControlOrMeta'] });
   await page.evaluate(() => { fixture.holdSearch = true; fixture.searchResolvers = []; });
   await page.locator('#searchInput').fill('old');
   await expect.poll(() => page.evaluate(() => fixture.searchResolvers.length)).toBe(1);
@@ -120,7 +120,7 @@ test('non-cancellable search results do not leak across tabs or reappear after c
 });
 
 test('special folder names are safe in tabs, breadcrumbs, hash and restored sessions', async ({ page }) => {
-  await page.locator('#content [data-nav-path="0/100% #中文 <x>/"]').click();
+  await page.locator('#content [data-nav-path="0/100% #中文 <x>/"] .file-name').click();
   await expect(activeTab(page)).toHaveText('100% #中文 <x>');
   await expect(row(page, 'special.txt')).toBeVisible();
   await expect(page.locator('#breadcrumb x')).toHaveCount(0);
@@ -149,7 +149,7 @@ test('tab shortcuts work from search but never discard a modal editor', async ({
 });
 
 test('folder bookmarks support new tabs; file Open still uses the system opener', async ({ page }) => {
-  await row(page, 'Beta').click();
+  await row(page, 'Beta').locator('.file-name').click();
   await expect(row(page, 'beta.txt')).toBeVisible();
   await page.locator('#btnStar').click();
   await row(page, 'beta.txt').hover();

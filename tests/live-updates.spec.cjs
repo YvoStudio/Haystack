@@ -9,7 +9,7 @@ test('external create, rename, write and delete update files and sidebar without
   });
   await expect(row(page, 'NewFolder')).toBeVisible();
   await expect(treeRow(page, '0/NewFolder/')).toBeVisible();
-  await row(page, 'NewFolder').click();
+  await row(page, 'NewFolder').locator('.file-name').click();
   await expect(row(page, 'new.txt')).toBeVisible();
   await page.evaluate(() => {
     Object.assign(fixture.dirs['/home/NewFolder'][0], { name: 'renamed.txt', size: 2048, mtime: '200' });
@@ -39,7 +39,7 @@ test('same-size image edits within one second invalidate thumbnail URLs', async 
 });
 
 test('silent refresh preserves tab, history, search, selection and scroll', async ({ page }) => {
-  await row(page, 'Alpha').click();
+  await row(page, 'Alpha').locator('.file-name').click();
   await expect(row(page, 'a49.txt')).toBeAttached();
   await page.evaluate(() => {
     fileSelectedIdx = 20;
@@ -59,7 +59,7 @@ test('silent refresh preserves tab, history, search, selection and scroll', asyn
 });
 
 test('sidebar reconciliation keeps manually expanded branches and unchanged list DOM', async ({ page }) => {
-  await row(page, 'Alpha').click();
+  await row(page, 'Alpha').locator('.file-name').click();
   await expect(row(page, 'Child')).toBeVisible();
   await page.evaluate(async () => {
     await expandOneLevel('0/Beta/', 2, () => true);
@@ -75,8 +75,8 @@ test('sidebar reconciliation keeps manually expanded branches and unchanged list
 });
 
 test('background tabs update on return and closing them releases their watches', async ({ page }) => {
-  await row(page, 'Beta').click({ modifiers: ['ControlOrMeta'] });
-  await row(page, 'Alpha').click();
+  await row(page, 'Beta').locator('.file-name').click({ modifiers: ['ControlOrMeta'] });
+  await row(page, 'Alpha').locator('.file-name').click();
   await expect.poll(() => page.evaluate(() => fixture.watched.some(path => path.replace(/\/+$/, '') === '/home/Beta'))).toBe(true);
   await page.evaluate(() => {
     fixture.dirs['/home/Beta'].push({ name: 'external.txt', type: 'file', size: 1, mtime: '100' });
@@ -90,7 +90,7 @@ test('background tabs update on return and closing them releases their watches',
 });
 
 test('invalidated in-flight invoke responses cannot refill stale directory cache', async ({ page }) => {
-  await row(page, 'Beta').click();
+  await row(page, 'Beta').locator('.file-name').click();
   await expect(row(page, 'beta.txt')).toBeVisible();
   await page.waitForTimeout(700); // Initial subscription/debounce settled.
   await page.evaluate(() => {
@@ -111,8 +111,8 @@ test('invalidated in-flight invoke responses cannot refill stale directory cache
 });
 
 test('a slow automatic refresh cannot overwrite a newly selected tab', async ({ page }) => {
-  await row(page, 'Beta').click({ modifiers: ['ControlOrMeta'] });
-  await row(page, 'Alpha').click();
+  await row(page, 'Beta').locator('.file-name').click({ modifiers: ['ControlOrMeta'] });
+  await row(page, 'Alpha').locator('.file-name').click();
   await expect(row(page, 'a49.txt')).toBeAttached();
   await page.waitForTimeout(600);
   await page.evaluate(() => {
@@ -145,7 +145,7 @@ test('updates wait for an open editor and do not discard unsaved content', async
 });
 
 test('focus catches missed events and polling works when native watching is unsupported', async ({ page }) => {
-  await row(page, 'Beta').click();
+  await row(page, 'Beta').locator('.file-name').click();
   await expect(row(page, 'beta.txt')).toBeVisible();
   await page.evaluate(() => {
     fixture.dirs['/home/Beta'].push({ name: 'focus.txt', type: 'file', size: 1, mtime: '100' });
@@ -194,7 +194,7 @@ test('hidden windows defer reads and catch up when shown again', async ({ page }
 });
 
 test('deleted open folders show an error and recover automatically when recreated', async ({ page }) => {
-  await row(page, 'Beta').click();
+  await row(page, 'Beta').locator('.file-name').click();
   await expect(row(page, 'beta.txt')).toBeVisible();
   await page.evaluate(() => {
     delete fixture.dirs['/home/Beta'];

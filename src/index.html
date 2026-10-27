@@ -743,6 +743,7 @@ function showMoreMenu(btn, localPath, relPath, isDir) {
   // 保持所在行高亮
   const fileRow = btn.closest('.file-item');
   if (fileRow) fileRow.classList.add('highlight');
+  const hasInlineActions = !!btn.closest('.file-actions');
 
   const rect = btn.getBoundingClientRect();
   const menuHeight = 300; // 估算菜单高度
@@ -756,15 +757,15 @@ function showMoreMenu(btn, localPath, relPath, isDir) {
   menu.style.left = Math.min(rect.left, window.innerWidth - 200) + 'px';
 
   const items = [];
+  items.push({
+    icon: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none"><path d="M18 13v6a2 2 0 01-2 2H5a2 2 0 01-2-2V8a2 2 0 012-2h6M15 3h6v6M10 14L21 3" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>',
+    label: '打开',
+    action: () => isDir ? navigate(relPath) : window.open(BASE + relPath, '_blank'),
+  });
   if (isDir) items.push({
     icon: SVG.folder,
     label: '在新标签页中打开',
     action: () => openTab(relPath),
-  });
-  else items.push({
-    icon: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none"><path d="M18 13v6a2 2 0 01-2 2H5a2 2 0 01-2-2V8a2 2 0 012-2h6M15 3h6v6M10 14L21 3" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>',
-    label: '打开',
-    action: () => window.open(BASE + relPath, '_blank'),
   });
 
   const termPath = isDir ? localPath : localPath.substring(0, localPath.lastIndexOf('/'));
@@ -779,7 +780,7 @@ function showMoreMenu(btn, localPath, relPath, isDir) {
     }
   });
 
-  if (isDir) items.push({
+  if (!hasInlineActions) items.push({
     icon: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none"><path d="M22 19a2 2 0 01-2 2H4a2 2 0 01-2-2V5a2 2 0 012-2h5l2 2h9a2 2 0 012 2z" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>',
     label: '在 Finder 中显示',
     action: () => {
@@ -788,7 +789,7 @@ function showMoreMenu(btn, localPath, relPath, isDir) {
     }
   });
 
-  if (isDir) items.push({
+  if (!hasInlineActions) items.push({
     icon: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none"><rect x="9" y="9" width="13" height="13" rx="2" stroke="currentColor" stroke-width="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1" stroke="currentColor" stroke-width="2"/></svg>',
     label: '复制本地路径',
     action: () => {
@@ -893,7 +894,7 @@ function showMoreMenu(btn, localPath, relPath, isDir) {
   bindMoreMenuDismissal(menu, btn);
   setTimeout(() => menu.addEventListener('click', (e) => e.stopPropagation()), 0);
 
-  // 目录若为 git/svn 仓库,异步检测后把"更新"二级菜单插到菜单顶部
+  // 目录若为 git/svn 仓库,把"更新"二级菜单插到"打开"后面。
   if (isDir && window.__haystack && window.__haystack.invoke) {
     const vcsIcon = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none"><path d="M4 4v6a4 4 0 004 4h8" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/><path d="M14 10l4 4-4 4" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>';
     window.__haystack.invoke('detect_vcs', { path: localPath }).then(kind => {
@@ -929,7 +930,7 @@ function showMoreMenu(btn, localPath, relPath, isDir) {
       });
       parent.appendChild(sub);
       parent.addEventListener('click', (e) => e.stopPropagation());
-      menu.insertBefore(parent, menu.firstChild);
+      menu.insertBefore(parent, menu.firstElementChild.nextElementSibling);
     }).catch(() => {});
   }
 }
@@ -1784,24 +1785,10 @@ function createStarBtn(itemPath, type) {
 }
 
 function buildDirActions(localPath, relPath) {
-  const actions = document.createElement('div');
-  actions.className = 'file-actions';
-
-  const btnStar = createStarBtn(relPath, 'directory');
-
-  const btnMore = document.createElement('button');
-  btnMore.className = 'btn-more';
-  btnMore.textContent = '···';
-  btnMore.addEventListener('click', (e) => {
-    e.stopPropagation();
-    showMoreMenu(btnMore, localPath, relPath, true);
-  });
-
-  actions.append(btnStar, btnMore);
-  return actions;
+  return buildActions(BASE + relPath, localPath, true);
 }
 
-function buildActions(filePath, localPath) {
+function buildActions(filePath, localPath, isDir = false) {
   const actions = document.createElement('div');
   actions.className = 'file-actions';
 
@@ -1831,7 +1818,7 @@ function buildActions(filePath, localPath) {
   });
 
   actions.appendChild(btnFinder);
-  actions.appendChild(createStarBtn(relFilePath, 'file'));
+  actions.appendChild(createStarBtn(relFilePath, isDir ? 'directory' : 'file'));
   actions.appendChild(btnCopy);
 
   const btnMore = document.createElement('button');
@@ -1839,7 +1826,7 @@ function buildActions(filePath, localPath) {
   btnMore.textContent = '···';
   btnMore.addEventListener('click', (e) => {
     e.stopPropagation();
-    showMoreMenu(btnMore, localPath, relFilePath, false);
+    showMoreMenu(btnMore, localPath, relFilePath, isDir);
   });
   actions.appendChild(btnMore);
 
