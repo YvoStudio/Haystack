@@ -15,7 +15,8 @@ Cross-platform desktop file manager — turn any directory into a searchable, pr
 - **Live directory updates** — external file creation, deletion, renaming and edits automatically update lists, thumbnails and sidebar without reloading; tab state, selection, scroll and expanded branches are preserved, with focus refresh and periodic checks as fallbacks
 - **Rich preview**
   - Images (gallery navigation + zoom: Ctrl+wheel / double-click / `+ −` buttons / `Cmd+0` to reset)
-  - Video / audio (native webview playback)
+  - Video (native playback, Previous/Next navigation in the current folder's display order)
+  - Audio (native webview playback)
   - Code / text (syntax highlighting via highlight.js)
   - Markdown (rendered with marked.js)
   - HTML (iframe preview + one-click view source)
